@@ -1,30 +1,74 @@
 plugins {
     id 'com.android.application' version '8.8.2'
+    id 'org.jetbrains.kotlin.android' version '2.1.10'
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.1.10'
+    id 'com.google.devtools.ksp' version '2.1.10-1.0.31'
 }
 
-def studioUrl = providers.gradleProperty('studioUrl').orElse('https://server.080726.xyz/novel/').get()
-def studio = new URI(studioUrl)
-if (studio.scheme != 'https' || !studio.host || studio.userInfo || studio.query || studio.fragment) {
-    throw new GradleException('studioUrl must be an HTTPS URL with no user info, query or fragment.')
+def signingVariables = ['QINGJIAN_KEYSTORE', 'QINGJIAN_STORE_PASSWORD', 'QINGJIAN_KEY_ALIAS', 'QINGJIAN_KEY_PASSWORD']
+def signingValues = signingVariables.collectEntries { [(it): providers.environmentVariable(it).orNull] }
+def signed = signingValues.values().every { it }
+if (!signed && signingValues.values().any { it }) {
+    throw new GradleException('All four QINGJIAN signing variables are required together.')
 }
-if (!studioUrl.endsWith('/')) studioUrl += '/'
 
 android {
     namespace 'xyz.qingjian.writer'
     compileSdk 35
+
     defaultConfig {
         applicationId 'xyz.qingjian.writer'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
-        buildConfigField 'String', 'STUDIO_URL', groovy.json.JsonOutput.toJson(studioUrl)
+        versionCode providers.gradleProperty('qingjianVersionCode').map { it.toInteger() }.getOrElse(2)
+        versionName '0.2.0'
     }
-    buildFeatures { buildConfig true }
+
+    if (signed) {
+        signingConfigs {
+            release {
+                storeFile file(signingValues.QINGJIAN_KEYSTORE)
+                storePassword signingValues.QINGJIAN_STORE_PASSWORD
+                keyAlias signingValues.QINGJIAN_KEY_ALIAS
+                keyPassword signingValues.QINGJIAN_KEY_PASSWORD
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+        }
+        release {
+            if (signed) signingConfig signingConfigs.release
+        }
+    }
+    buildFeatures { compose true }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 }
 
-dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
+kotlin { jvmToolchain(17) }
+ksp { arg('room.schemaLocation', "$projectDir/schemas") }
+
+dependencies {
+    implementation platform('androidx.compose:compose-bom:2025.02.00')
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-core'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.navigation:navigation-compose:2.8.8'
+    implementation 'androidx.room:room-runtime:2.7.0'
+    implementation 'androidx.room:room-ktx:2.7.0'
+    implementation 'androidx.sqlite:sqlite-bundled:2.5.0'
+    ksp 'androidx.room:room-compiler:2.7.0'
+    implementation 'androidx.datastore:datastore-preferences:1.1.3'
+    implementation 'io.coil-kt:coil-compose:2.7.0'
+    implementation 'org.commonmark:commonmark:0.24.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20250107'
+}

@@ -1,37 +1,109 @@
 name: Android APK
 on:
   push:
-    branches: [main]
+    branches: [main, android-native]
+  pull_request:
+    branches: [main, android-native]
   workflow_dispatch:
+    inputs:
+      signed:
+        description: Build an APK with the permanent release signing key
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  android:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.10.2'
-      - name: Build Android test APK
-        env:
-          STUDIO_URL: ${{ vars.QINGJIAN_STUDIO_URL }}
-        run: |
-          args=(--no-daemon :app:assembleDebug)
-          if [[ -n "$STUDIO_URL" ]]; then args+=("-PstudioUrl=$STUDIO_URL"); fi
-          gradle "${args[@]}"
+      - name: Test and build native debug APK
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: Qingjian-Android-test
+          name: Qingjian-Native-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Qingjian-Native-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+
+  signed:
+    if: github.event_name == 'workflow_dispatch' && inputs.signed && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-native')
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.10.2'
+          cache-disabled: true
+      - name: Build and verify release APK
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.QINGJIAN_KEYSTORE_BASE64 }}
+          QINGJIAN_STORE_PASSWORD: ${{ secrets.QINGJIAN_STORE_PASSWORD }}
+          QINGJIAN_KEY_ALIAS: ${{ secrets.QINGJIAN_KEY_ALIAS }}
+          QINGJIAN_KEY_PASSWORD: ${{ secrets.QINGJIAN_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ vars.QINGJIAN_CERT_SHA256 }}
+        run: |
+          : "${KEYSTORE_BASE64:?Set QINGJIAN_KEYSTORE_BASE64 in Actions secrets}"
+          : "${QINGJIAN_STORE_PASSWORD:?Set QINGJIAN_STORE_PASSWORD in Actions secrets}"
+          : "${QINGJIAN_KEY_ALIAS:?Set QINGJIAN_KEY_ALIAS in Actions secrets}"
+          : "${QINGJIAN_KEY_PASSWORD:?Set QINGJIAN_KEY_PASSWORD in Actions secrets}"
+          : "${EXPECTED_CERT_SHA256:?Set QINGJIAN_CERT_SHA256 in Actions variables}"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          umask 077
+          export QINGJIAN_KEYSTORE
+          QINGJIAN_KEYSTORE="$(mktemp "$RUNNER_TEMP/qingjian.XXXXXX")"
+          trap 'rm -f "$QINGJIAN_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$QINGJIAN_KEYSTORE"
+          unset KEYSTORE_BASE64
+          version_code=$((100 + GITHUB_RUN_NUMBER))
+          gradle --no-daemon --no-build-cache :app:assembleRelease "-PqingjianVersionCode=$version_code"
+          apk=app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+          signer_count="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/{count++} END{print count+0}' "$RUNNER_TEMP/signature.txt")"
+          actual="$(awk -F ': ' '/^Signer #1 certificate SHA-256 digest:/{print tolower($2)}' "$RUNNER_TEMP/signature.txt")"
+          if [[ "$signer_count" != 1 || "$actual" != "$expected" ]]; then
+            echo '::error::APK signing certificate does not match QINGJIAN_CERT_SHA256'
+            exit 1
+          fi
+          mkdir -p release-artifacts
+          cp "$apk" release-artifacts/Qingjian-Android.apk
+          cp "$RUNNER_TEMP/signature.txt" release-artifacts/signature.txt
+          (cd release-artifacts && sha256sum Qingjian-Android.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Qingjian-Android-signed
+          path: release-artifacts/
           if-no-files-found: error
