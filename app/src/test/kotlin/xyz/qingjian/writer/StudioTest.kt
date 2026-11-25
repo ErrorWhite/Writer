@@ -89,4 +89,24 @@ class StudioTest {
             assertEquals("第二版", diff.after)
         }
     }
+
+    @Test
+    fun comparisonAlignsCommonLinesAcrossInsertionsAndReplacements() {
+        val rows = alignDiff("开场\n旧稿\n下章", "开场\n新稿\n新增\n下章")
+        assertEquals(listOf(DiffLine("开场", "开场"), DiffLine("旧稿", "新稿"),
+            DiffLine(null, "新增"), DiffLine("下章", "下章")), rows)
+    }
+
+    @Test
+    fun skillScriptMustDeclareARealFileAndOnlyGetsKnownTools() {
+        val source = JSONObject("""
+            {"name":"计数","metadata":{"qingjian":{"entry":"tools/run.js","tools":["wordCount","shell"]}},
+             "files":[{"path":"tools/run.js","text":"function run(input, tools) { return tools.wordCount(input.text); }"}]}
+        """.trimIndent())
+        val script = requireNotNull(declaredSkillScript(source))
+        assertEquals(listOf("wordCount"), script.strings("tools"))
+        assertEquals(64, scriptFingerprint(script).length)
+        source.getJSONObject("metadata").getJSONObject("qingjian").put("entry", "../tools/run.js")
+        assertEquals(null, declaredSkillScript(source))
+    }
 }

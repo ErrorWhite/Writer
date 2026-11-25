@@ -61,6 +61,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val vault = ProviderVault(application)
     private val client = ModelClient()
     private val studio = StudioServer(client)
+    private val approvals = application.getSharedPreferences("skill_approvals", 0)
     private val plan = ChatGptPlan(application, vault, client)
     private val mutablePlanProfiles = MutableStateFlow<List<PlanProfile>>(emptyList())
     val planProfiles = mutablePlanProfiles.asStateFlow()
@@ -336,6 +337,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     fun generate(
         id: String,
         intent: String,
+        skillBookId: String? = null,
         prepare: suspend Library.() -> Pair<String, List<ModelMessage>>,
         accept: suspend Library.(String) -> Unit = {}
     ) {
@@ -368,8 +370,13 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                     updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) }
                 }
                 val text = when {
-                    studioAddress != null -> studio.generate(studioAddress, intent, system, messages,
-                        collectText, collectReasoning) { meter = it }
+                    studioAddress != null -> {
+                        val scripts = if (skillBookId != null && intent in setOf("逐段改稿", "批量改稿", "整章改写", "生成初稿")) {
+                            approvedScripts(studioAddress, skillBookId)
+                        } else emptyList()
+                        studio.generate(studioAddress, intent, system, messages, collectText, collectReasoning,
+                            { meter = it }, scripts)
+                    }
                     planProfile != null -> plan.generate(planProfile.id, system, messages, collectText, collectReasoning) { meter = it }
                     else -> client.generate(requireNotNull(account), system, messages, collectText, collectReasoning) { meter = it }
                 }
@@ -436,6 +443,43 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         mutateBook(bookId) { it.obj("skills").array("custom").put(record) }
         notice("已导入写作技能")
     }
+
+    fun isSkillApproved(bookId: String, skill: JSONObject): Boolean {
+        val script = declaredSkillScript(skill) ?: return false
+        return approvals.getString(approvalKey(studioEndpoint.value, bookId, skill.string("id")), null) == scriptFingerprint(script)
+    }
+
+    fun approveSkillScript(bookId: String, skill: JSONObject, approved: Boolean, changed: () -> Unit) = perform {
+        val endpoint = studioEndpoint.value
+        require(studio.connected(endpoint)) { "请先登录要运行技能的青简服务器。" }
+        val script = requireNotNull(declaredSkillScript(skill)) { "该技能没有有效的 JavaScript 入口。" }
+        val key = approvalKey(endpoint, bookId, skill.string("id"))
+        val stored = withContext(Dispatchers.IO) {
+            approvals.edit().apply { if (approved) putString(key, scriptFingerprint(script)) else remove(key) }.commit()
+        }
+        check(stored) { "无法保存本机授权。" }
+        changed()
+    }
+
+    fun testSkill(bookId: String, skill: JSONObject, sample: String, result: (String) -> Unit) = perform {
+        require(isSkillApproved(bookId, skill)) { "请先授权此版本的技能脚本。" }
+        val script = requireNotNull(declaredSkillScript(skill))
+        result(studio.testSkill(studioEndpoint.value, script, sample))
+    }
+
+    private suspend fun approvedScripts(endpoint: String, bookId: String): List<JSONObject> {
+        val book = library.export(bookId)
+        val skills = book.optJSONObject("skills") ?: return emptyList()
+        val enabled = skills.strings("enabled").toSet()
+        return skills.records("custom").mapNotNull { skill ->
+            val id = skill.string("id")
+            val source = declaredSkillScript(skill) ?: return@mapNotNull null
+            source.takeIf { id in enabled &&
+                approvals.getString(approvalKey(endpoint, bookId, id), null) == scriptFingerprint(source) }
+        }.take(4)
+    }
+
+    private fun approvalKey(endpoint: String, bookId: String, skillId: String) = "$endpoint\n$bookId\n$skillId"
 
     fun importWorldBook(bookId: String, uri: Uri) = perform {
         val entries = withContext(Dispatchers.IO) {

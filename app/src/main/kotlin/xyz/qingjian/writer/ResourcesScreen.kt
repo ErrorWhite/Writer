@@ -97,12 +97,40 @@ internal fun ResourcesScreen(model: WriterModel, book: BookRow) {
     asset?.let { item -> AssetDialog(model, book, item) { asset = null } }
     if (imageOpen) ImageDialog(model, book.id) { imageOpen = false }
     skill?.let { item ->
+        val script = remember(item) { declaredSkillScript(item) }
+        var approved by remember(item) { mutableStateOf(model.isSkillApproved(book.id, item)) }
+        var grant by rememberSaveable { mutableStateOf(false) }
+        var testText by rememberSaveable { mutableStateOf("") }
+        var result by remember { mutableStateOf("") }
+        val server by model.studioStatus.collectAsStateWithLifecycle()
         AlertDialog(
             onDismissRequest = { skill = null }, title = { Text(item.string("name")) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(item.string("instruction"))
                 item.records("files").forEach { Text(it.string("path"), style = MaterialTheme.typography.labelLarge) }
+                if (script != null) {
+                    Text("脚本入口 · ${script.string("entry")}")
+                    if (server != null) {
+                        TextButton(onClick = {
+                            if (approved) model.approveSkillScript(book.id, item, false) { approved = false }
+                            else grant = true
+                        }) { Text(if (approved) "撤销脚本授权" else "授权此版本脚本") }
+                        if (approved) {
+                            OutlinedTextField(testText, { testText = it }, label = { Text("试跑样本文字") })
+                            TextButton(onClick = { model.testSkill(book.id, item, testText) { result = it } }) { Text("在服务器试跑") }
+                            if (result.isNotBlank()) Text(result)
+                        }
+                    } else Text("登录青简服务器后可在沙箱中试跑脚本。")
+                }
             } }, confirmButton = { TextButton(onClick = { skill = null }) { Text("关闭") } }
+        )
+        if (grant && script != null) AlertDialog(
+            onDismissRequest = { grant = false }, title = { Text("授权运行此版本技能脚本？") },
+            text = { Text("脚本会发送到已登录的青简服务器，在 QuickJS 沙箱中运行。生成时仅附加文本输入，以及技能声明的文本工具。") },
+            confirmButton = { TextButton(onClick = {
+                model.approveSkillScript(book.id, item, true) { approved = true; grant = false }
+            }) { Text("授权") } },
+            dismissButton = { TextButton(onClick = { grant = false }) { Text("取消") } }
         )
     }
 }

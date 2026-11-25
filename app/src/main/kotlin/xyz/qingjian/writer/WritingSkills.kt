@@ -102,3 +102,24 @@ internal fun skillPrompt(book: JSONObject, task: String): String {
         listOf(skill.string("name"), instruction, files, sample).filter(String::isNotBlank).joinToString("\n")
     }
 }
+
+internal fun declaredSkillScript(skill: JSONObject): JSONObject? {
+    val config = skill.optJSONObject("metadata")?.optJSONObject("qingjian") ?: return null
+    val entry = config.string("entry")
+    if (!entry.endsWith(".js") || '\\' in entry || ':' in entry || '\u0000' in entry ||
+        entry.split('/').any { it.isBlank() || it == "." || it == ".." }) return null
+    val files = skill.records("files")
+    val source = files.find { it.string("path") == entry }?.string("text").orEmpty()
+    if (source.isBlank() || source.length > 32_000) return null
+    val tools = config.strings("tools").distinct().filter { it in setOf("wordCount", "find", "readReference") }
+    val references = if ("readReference" in tools) files.filter {
+        val path = it.string("path")
+        path != entry && path.substringAfterLast('.') !in setOf("js", "ts", "sh", "py", "ps1") && it.string("text").isNotBlank()
+    }.take(8).map { JSONObject().put("path", it.string("path").take(200)).put("text", it.string("text").take(2400)) }
+    else emptyList()
+    return JSONObject().put("name", skill.string("name").take(60)).put("entry", entry).put("source", source)
+        .put("tools", JSONArray(tools)).put("references", JSONArray(references))
+}
+
+internal fun scriptFingerprint(script: JSONObject) = java.security.MessageDigest.getInstance("SHA-256")
+    .digest(script.toString().toByteArray()).joinToString("") { "%02x".format(it) }

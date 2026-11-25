@@ -212,6 +212,7 @@ internal fun WritingAiDialog(
     var change by remember(review?.string("id")) { mutableStateOf(review?.string("after").orEmpty()) }
     var selected by remember(review?.toString()) { mutableStateOf(setOf<String>()) }
     var substantial by rememberSaveable { mutableStateOf(false) }
+    var fullDiff by rememberSaveable { mutableStateOf(false) }
     val intentForReview = review?.string("intent")?.let { name -> WritingIntent.entries.find { it.name == name } }
     val generating = run?.running == true
 
@@ -223,7 +224,7 @@ internal fun WritingAiDialog(
         var segments: List<JSONObject> = emptyList()
         var sourceChapter = JSONObject()
         var sourceBook = JSONObject()
-        model.generate(runId, task.label, prepare = {
+        model.generate(runId, task.label, skillBookId = book.id, prepare = {
             val snapshot = export(book.id)
             val source = snapshot.records("volumes").flatMap { it.records("chapters") }.first { it.string("id") == chapter.id }
             sourceChapter = source
@@ -477,6 +478,7 @@ internal fun WritingAiDialog(
                     }
                 } else {
                     if (review.string("before").isNotBlank()) {
+                        TextButton(onClick = { fullDiff = true }) { Text("全屏比对") }
                         Text("原文", style = MaterialTheme.typography.labelLarge)
                         Text(review.string("before"), Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()))
                     }
@@ -500,6 +502,7 @@ internal fun WritingAiDialog(
             }
         }
     )
+    if (fullDiff && review != null) ReviewDiff(review.string("before"), change) { fullDiff = false }
 }
 
 private fun leadingIndent(text: String) = text.takeWhile { it in " \t　" }

@@ -65,6 +65,12 @@ internal class StudioServer(private val client: ModelClient) {
     suspend fun uploadCopy(endpoint: String, data: JSONObject): String =
         call(endpoint, "api/book/import", JSONObject().put("book", data)).getString("id")
 
+    suspend fun testSkill(endpoint: String, script: JSONObject, text: String): String {
+        val result = call(endpoint, "api/skills/test", JSONObject().put("script", script)
+            .put("input", JSONObject().put("text", text.take(16_000)).put("instruction", "").put("task", "test")))
+        return result.opt("result")?.toString().orEmpty()
+    }
+
     private suspend fun call(endpoint: String, path: String, body: JSONObject? = null) =
         client.execute(request(endpoint, path, body)) { response, _ ->
             val bytes = requireNotNull(response.body).byteStream().use { it.readLimited(2_000_000, "服务器响应过大。") }
@@ -73,7 +79,8 @@ internal class StudioServer(private val client: ModelClient) {
 
     suspend fun generate(
         endpoint: String, task: String, system: String, messages: List<ModelMessage>,
-        text: (String) -> Unit, reasoning: (String) -> Unit, usage: (ModelUsage) -> Unit
+        text: (String) -> Unit, reasoning: (String) -> Unit, usage: (ModelUsage) -> Unit,
+        scripts: List<JSONObject>
     ): String {
         val intent = when (task) {
             "文本扮演" -> "roleplay"
@@ -105,6 +112,7 @@ internal class StudioServer(private val client: ModelClient) {
             material.put("审阅原文", JSONArray(paragraphSpans(material.string("目标正文")).map { it.text }))
         }
         val data = JSONObject().put("provider", "codex").put("intent", intent).put("material", material)
+        if (scripts.isNotEmpty()) data.put("scripts", JSONArray(scripts))
         val request = request(endpoint, "api/ai/rewrite", data).newBuilder()
             .header("Accept", "application/x-ndjson").build()
         return client.execute(request) { response, active ->
