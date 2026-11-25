@@ -35,6 +35,7 @@ jobs:
       - name: Run native tests and lint
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug
       - name: Check release code shrinking
+        if: github.event_name != 'workflow_dispatch' || !inputs.signed
         run: gradle --no-daemon :app:minifyReleaseWithR8
       - uses: actions/upload-artifact@v4
         if: always()
@@ -87,19 +88,22 @@ jobs:
           trap 'rm -f "$QINGJIAN_KEYSTORE"' EXIT
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$QINGJIAN_KEYSTORE"
           unset KEYSTORE_BASE64
+          keytool -exportcert -keystore "$QINGJIAN_KEYSTORE" -storetype PKCS12 \
+            -storepass:env QINGJIAN_STORE_PASSWORD -alias "$QINGJIAN_KEY_ALIAS" \
+            -file "$RUNNER_TEMP/qingjian-release.cer"
+          read -r key_fingerprint _ < <(sha256sum "$RUNNER_TEMP/qingjian-release.cer")
+          if [[ "$key_fingerprint" != "$expected" ]]; then
+            echo "::error::Stored release key certificate has unexpected SHA-256: $key_fingerprint"
+            exit 1
+          fi
           version_code=$((100 + GITHUB_RUN_NUMBER))
           gradle --no-daemon --no-build-cache :app:assembleRelease "-PqingjianVersionCode=$version_code"
+          sdk_tools="$ANDROID_HOME/build-tools/37.0.0"
           mkdir -p release-artifacts
           for abi in arm64-v8a x86_64; do
             apk="app/build/outputs/apk/release/app-$abi-release.apk"
             report="release-artifacts/signature-$abi.txt"
-            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk" > "$report"
-            signer_count="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/{count++} END{print count+0}' "$report")"
-            actual="$(awk -F ': ' '/^Signer #1 certificate SHA-256 digest:/{print tolower($2)}' "$report")"
-            if [[ "$signer_count" != 1 || "$actual" != "$expected" ]]; then
-              echo "::error::APK signing certificate for $abi does not match QINGJIAN_CERT_SHA256"
-              exit 1
-            fi
+            java --class-path "$sdk_tools/lib/apksigner.jar" .github/scripts/VerifyApk.java "$apk" "$expected" > "$report"
             cp "$apk" "release-artifacts/Qingjian-Android-$abi.apk"
           done
           (cd release-artifacts && sha256sum Qingjian-Android-*.apk > SHA256SUMS)
