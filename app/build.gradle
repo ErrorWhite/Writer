@@ -1,0 +1,30 @@
+plugins {
+    id 'com.android.application' version '8.8.2'
+}
+
+def studioUrl = providers.gradleProperty('studioUrl').orElse('https://server.080726.xyz/novel/').get()
+def studio = new URI(studioUrl)
+if (studio.scheme != 'https' || !studio.host || studio.userInfo || studio.query || studio.fragment) {
+    throw new GradleException('studioUrl must be an HTTPS URL with no user info, query or fragment.')
+}
+if (!studioUrl.endsWith('/')) studioUrl += '/'
+
+android {
+    namespace 'xyz.qingjian.writer'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'xyz.qingjian.writer'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        buildConfigField 'String', 'STUDIO_URL', groovy.json.JsonOutput.toJson(studioUrl)
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
