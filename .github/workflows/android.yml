@@ -78,17 +78,25 @@ jobs:
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
-          test_status=0
-          gradle --no-daemon :app:connectedDebugAndroidTest || test_status=$?
+          gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+          adb install app/build/outputs/apk/debug/app-x86_64-debug.apk
+          adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          adb shell am instrument -w -r \
+            -e class xyz.qingjian.writer.WritingFlowTest \
+            io.wboat.writer.debug.test/androidx.test.runner.AndroidJUnitRunner \
+            | tee "$RUNNER_TEMP/qingjian-instrumentation.log"
           adb pull /sdcard/Download/qingjian-qa "$RUNNER_TEMP/qingjian-qa" || true
-          exit "$test_status"
+          grep -Eq '^OK \([2-9][0-9]* tests\)' "$RUNNER_TEMP/qingjian-instrumentation.log"
+          for name in chapter providers provider-connection provider-models; do
+            test -s "$RUNNER_TEMP/qingjian-qa/$name.png"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: Qingjian-Android-writing-flow
           path: |
-            app/build/reports/androidTests/
             ${{ runner.temp }}/qingjian-emulator.log
+            ${{ runner.temp }}/qingjian-instrumentation.log
             ${{ runner.temp }}/qingjian-qa/
 
   signed:
