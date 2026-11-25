@@ -261,8 +261,9 @@ internal class Library(context: Context) {
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 
-    suspend fun addVolume(bookId: String, title: String) = write {
-        dao.putVolume(volumeRow(bookId, Manuscript.newVolume(title), dao.volumes(bookId).size))
+    suspend fun addVolume(bookId: String, title: String, direction: String = "") = write {
+        val volume = Manuscript.newVolume(title).apply { if (direction.isNotBlank()) put("direction", direction) }
+        dao.putVolume(volumeRow(bookId, volume, dao.volumes(bookId).size))
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 

@@ -256,6 +256,8 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     var rename by rememberSaveable { mutableStateOf(false) }
     var remove by rememberSaveable { mutableStateOf(false) }
+    var upload by rememberSaveable { mutableStateOf(false) }
+    val server by model.studioStatus.collectAsStateWithLifecycle()
     val cover = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         if (it != null) model.importCover(book.id, it)
     }
@@ -271,6 +273,8 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
                 expanded = false
                 model.perform { setCover(book.id, "") }
             })
+            if (server != null) DropdownMenuItem({ Text("备份副本到服务器") },
+                onClick = { expanded = false; upload = true })
             DropdownMenuItem(text = { Text("删除作品") }, onClick = { expanded = false; remove = true })
         }
     }
@@ -288,6 +292,12 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
             }) { Text("删除", color = MaterialTheme.colorScheme.error) }
         },
         dismissButton = { TextButton(onClick = { remove = false }) { Text("取消") } }
+    )
+    if (upload) AlertDialog(
+        onDismissRequest = { upload = false }, title = { Text("备份《${book.title}》到服务器？") },
+        text = { Text("全书正文和书内资料会上传到已登录的青简服务器，并保存为独立作品。") },
+        confirmButton = { TextButton(onClick = { model.uploadStudioCopy(book.id); upload = false }) { Text("上传副本") } },
+        dismissButton = { TextButton(onClick = { upload = false }) { Text("取消") } }
     )
 }
 

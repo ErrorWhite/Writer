@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import io.github.suqi8.coui.kmp.basic.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import io.github.suqi8.coui.kmp.basic.FloatingActionButton
@@ -60,6 +62,8 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: () -> Unit) {
     val books by model.library.shelf.collectAsStateWithLifecycle(initialValue = null)
+    val studio by model.studioStatus.collectAsStateWithLifecycle()
+    val remote by model.studioBooks.collectAsStateWithLifecycle()
     var creating by rememberSaveable { mutableStateOf(false) }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         if (it != null) model.previewImport(it)
@@ -97,6 +101,7 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                             Button(onClick = { creating = true }) { Text("新建作品") }
                             OutlinedButton(onClick = pickBackup) { Text("导入备份") }
                         }
+                        if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("从服务器导入") }
                     }
                 }
             }
@@ -106,7 +111,12 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                item { OutlinedButton(onClick = pickBackup) { Text("导入备份") } }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = pickBackup) { Text("导入备份") }
+                        if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
+                    }
+                }
                 items(entries, key = ShelfEntry::id) { book ->
                     Card(
                         onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
@@ -131,6 +141,20 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
     }
     if (creating) NameDialog("新建作品", "书名", dismiss = { creating = false }) { title ->
         model.perform { open(create(title)) }
+    }
+    remote?.let { entries ->
+        AlertDialog(
+            onDismissRequest = model::closeStudioBooks, title = { Text("服务器书架") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (entries.isEmpty()) Text("服务器没有作品")
+                    entries.forEach { book ->
+                        TextButton(onClick = { model.previewStudioBook(book.id) }) { Text(book.title) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = model::closeStudioBooks) { Text("关闭") } }
+        )
     }
 }
 

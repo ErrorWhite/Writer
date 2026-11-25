@@ -6,13 +6,14 @@
 
 - 离线书架与写作，支持分卷分章、查找替换、Markdown、撤销重做、专注模式、章节和全书还原点。
 - 全书 JSON 沿用青简 PC 格式。导入保留作品、卷、章、段落 ID 及扩展字段，导出另支持 Markdown、TXT 和 EPUB。
-- 创作工作台提供立项、设定、记忆、伏笔、剧情、世界书和写作提示词。AI 改稿保留候选及原文，采用时校验正文和结构。
-- 模型账号支持 OpenAI Responses、OpenAI Chat 兼容供应商与 Anthropic Messages，凭据在本机由 Android Keystore 保护。
+- 创作工作台提供立项、设定、记忆、伏笔、剧情、世界书、资料附件、Skill 和写作提示词。AI 改稿保留候选及原文，采用时校验正文和结构。
+- 模型账号支持 OpenAI Responses、OpenAI Chat 兼容供应商、Anthropic Messages 和青简服务器 Codex。API 凭据在本机由 Android Keystore 保护。
 - 文本扮演复用 Eta 角色卡、宏、角色世界书和 SSE 解析，支持酒馆 JSON/PNG、开场白、流式回复、停止、重写、会话分支与导出。
+- Git 历史记录全书快照和分文件差异，可以创建分支及恢复提交。登录青简服务器后可以下载书稿并上传独立备份副本。
 
 ## GitHub Actions 与固定签名
 
-开发分支的提交仅运行单元测试和 lint。功能验收完成后再手动运行 Android APK 工作流的 `signed` 任务。工作流读取已设置的持久 PKCS#12 发布密钥，验证证书 SHA-256，并上传经过 R8 和资源压缩的发布 APK。当前发布构建覆盖 ARM64 与 x86-64。
+开发分支的提交仅运行单元测试和 lint。功能验收完成后再手动运行 Android APK 工作流的 `signed` 任务。工作流读取已设置的持久 PKCS#12 发布密钥，逐个验证证书 SHA-256，并上传经过 R8 和资源压缩的 ARM64、x86-64 独立 APK。
 
 | 类型 | 名称 | 内容 |
 | --- | --- | --- |
@@ -24,6 +25,6 @@
 
 ## 开源来源
 
-- [Eta](https://github.com/Mangi-11/Eta/tree/bbab1b76b354e2f24a2e5f848b959da7f6286365)（GPL-3.0）的角色卡、世界书和 SSE 源码位于 `app/src/main/kotlin/io/github/mangi/eta/agent/`。SSE 读取器接收外部取消回调，青简负责网络连接和任务生命周期。原授权见 `COPYING`。
+- [Eta](https://github.com/Mangi-11/Eta/tree/bbab1b76b354e2f24a2e5f848b959da7f6286365)（GPL-3.0）的角色卡、世界书、社区模型目录和 SSE 源码位于 `app/src/main/kotlin/io/github/mangi/eta/`。SSE 读取器接收外部取消回调，青简负责网络连接和任务生命周期。原授权见 `COPYING`。
 - COUI 使用 Eta 同版本的 `io.github.suqi8.coui.kmp` 2.1.0（Apache-2.0）。青简沿用自己的主题配色和界面布局。
 - 青简原版图标与移植规则的许可、Qingjian Serif 标题字体的 OFL 许可均在 `app/src/main/assets/licenses/`。标题字体从思源宋体派生，覆盖常用简繁汉字。

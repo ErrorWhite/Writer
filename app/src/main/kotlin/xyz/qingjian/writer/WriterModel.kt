@@ -72,6 +72,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val mutableStudioStatus = MutableStateFlow<JSONObject?>(null)
     val studioStatus = mutableStudioStatus.asStateFlow()
+    private val mutableStudioBooks = MutableStateFlow<List<StudioBook>?>(null)
+    val studioBooks = mutableStudioBooks.asStateFlow()
     val activeAccount = application.preferences.data.map { it[selectedAccountKey] }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     private val mutableGenerations = MutableStateFlow<Map<String, Generation>>(emptyMap())
@@ -193,6 +195,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             studio.signOut(studioEndpoint.value)
         } finally {
             mutableStudioStatus.value = null
+            mutableStudioBooks.value = null
             if (activeAccount.value == STUDIO_ACCOUNT) selectAccount(null)
         }
     }
@@ -220,6 +223,21 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     fun configureStudio(model: String, effort: String, enabled: Boolean) = perform {
         mutableStudioStatus.value = studio.action(studioEndpoint.value, "settings",
             JSONObject().put("model", model).put("effort", effort).put("enabled", enabled))
+    }
+
+    fun listStudioBooks() = perform { mutableStudioBooks.value = studio.books(studioEndpoint.value) }
+
+    fun closeStudioBooks() { mutableStudioBooks.value = null }
+
+    fun previewStudioBook(id: String) = perform {
+        val book = studio.book(studioEndpoint.value, id)
+        closeStudioBooks()
+        mutableImport.value = ImportPreview(book, matchingBook(book))
+    }
+
+    fun uploadStudioCopy(bookId: String) = perform {
+        studio.uploadCopy(studioEndpoint.value, export(bookId))
+        notice("已在青简服务器保存一份副本")
     }
 
     private suspend fun selectAccount(id: String?) {

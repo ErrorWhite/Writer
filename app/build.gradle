@@ -45,8 +45,15 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
-            ndk { abiFilters 'arm64-v8a', 'x86_64' }
             if (signed) signingConfig signingConfigs.release
+        }
+    }
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'x86_64'
+            universalApk false
         }
     }
     buildFeatures { compose true }

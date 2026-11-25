@@ -46,6 +46,25 @@ internal class StudioServer(private val client: ModelClient) {
     suspend fun action(endpoint: String, resource: String, body: JSONObject) =
         call(endpoint, "api/ai/codex/$resource", body)
 
+    suspend fun books(endpoint: String): List<StudioBook> =
+        client.execute(request(endpoint, "api/books")) { response, _ ->
+            val list = requireNotNull(response.body).byteStream().use { it.readLimited(8 * 1024 * 1024, "服务器书架过大。") }
+            JSONArray(list.toString(Charsets.UTF_8)).objects().map {
+                StudioBook(it.string("id"), it.string("title"))
+            }.filter { it.id.isNotBlank() && it.title.isNotBlank() }
+        }
+
+    suspend fun book(endpoint: String, id: String): JSONObject {
+        val path = "api/book?id=" + java.net.URLEncoder.encode(id, Charsets.UTF_8.name())
+        return client.execute(request(endpoint, path)) { response, _ ->
+            val data = requireNotNull(response.body).byteStream().use { it.readLimited(64 * 1024 * 1024, "服务器书稿超过 64 MB。") }
+            Manuscript.read(data.toString(Charsets.UTF_8))
+        }
+    }
+
+    suspend fun uploadCopy(endpoint: String, data: JSONObject): String =
+        call(endpoint, "api/book/import", JSONObject().put("book", data)).getString("id")
+
     private suspend fun call(endpoint: String, path: String, body: JSONObject? = null) =
         client.execute(request(endpoint, path, body)) { response, _ ->
             val bytes = requireNotNull(response.body).byteStream().use { it.readLimited(2_000_000, "服务器响应过大。") }
@@ -66,6 +85,12 @@ internal class StudioServer(private val client: ModelClient) {
             "全书大纲" -> "outline"
             "创作设定" -> "settings"
             "章节审阅" -> "chapter-review"
+            "整理资料" -> "library-extract"
+            "状态提案" -> "state-proposal"
+            "样本分析" -> "reference-analysis"
+            "立项建议" -> "profile-suggest"
+            "下一卷规划" -> "volume"
+            "压缩上下文" -> "context"
             "定稿交接" -> "chapter-close"
             else -> error("此任务尚未接入青简服务器。")
         }
@@ -106,12 +131,13 @@ internal class StudioServer(private val client: ModelClient) {
                                 (meter?.opt("output") as? Number)?.toInt(),
                                 (meter?.opt("cached") as? Number)?.toInt()
                             ))
-                            val structured = value.optJSONObject("data")
+                            val structured = value.opt("data")
                             result = when {
-                                intent == "batch" && structured != null -> JSONArray(structured.records("items").map {
+                                intent == "batch" && structured is JSONArray -> JSONArray(structured.objects().map {
                                     JSONObject().put("id", it.string("paragraphId")).put("after", it.string("text"))
                                 }).toString()
-                                structured != null -> structured.toString()
+                                structured is JSONArray -> JSONObject().put("items", structured).toString()
+                                structured is JSONObject -> structured.toString()
                                 else -> value.string("text").ifBlank { streamed.toString() }
                             }
                             break
@@ -145,6 +171,8 @@ internal class StudioServer(private val client: ModelClient) {
         }
     }
 }
+
+internal data class StudioBook(val id: String, val title: String)
 
 private fun HttpUrl.encodedAuthority() = if (port == 443) {
     if (host.contains(':')) "[$host]" else host

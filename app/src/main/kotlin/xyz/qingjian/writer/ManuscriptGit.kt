@@ -71,7 +71,7 @@ internal class ManuscriptGit(private val root: File) {
                     require(!unchanged) { "书稿与分支的最新提交一致。" }
                     val author = PersonIdent("青简", "qingjian@localhost")
                     val commit = CommitBuilder().apply {
-                        treeId = tree
+                        setTreeId(tree)
                         if (parent != null) setParentId(parent)
                         this.author = author
                         committer = author

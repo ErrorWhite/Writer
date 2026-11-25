@@ -63,7 +63,13 @@ internal enum class WritingIntent(val label: String, val instruction: String) {
     Chapter("生成初稿", "严格依照已确认的章节摘要和作者要求生成完整初稿，只返回正文。"),
     Outline("全书大纲", "按当前立项与作者要求写全书大纲，说明主线、分卷进展、回收与结局。"),
     Settings("创作设定", "按当前立项和已确认资料整理创作设定，列出人物、世界规则和场景。"),
-    Review("章节审阅", "审阅正文与创作设定的连续性、节奏、视角、文风，逐条引用正文提出可操作建议。"),
+    Review("章节审阅", """检查设定一致性、跨章衔接和文风。只返回 {"items":[{"role":"continuity|transition|style","paragraphId":"原段落编号","quote":"逐字原文","note":"建议"}]}。最多 8 条。"""),
+    Extract("整理资料", """从正文提取可确认资料。只返回 {"items":[{"kind":"character|rule|scene|foreshadow|event|annotation","title":"标题","body":"说明","paragraphId":"原段落编号","quote":"逐字原文"}]}。最多 8 条。"""),
+    State("状态提案", """根据正文为目标条目提出可证实的状态变更。只返回 {"items":[{"kind":"character|rule|foreshadow","targetId":"目标编号","paragraphId":"原段落编号","quote":"逐字原文","note":"说明","value":"新状态"}]}。"""),
+    Reference("样本分析", """从作者提供的样本中抽象叙事手法。只返回包含 structure、rhythm、viewpoint、conflict、hook 五个字符串的 JSON 对象。"""),
+    Profile("立项建议", """从作者要求和书稿构思提出作品立项候选。只返回 JSON 对象，可用字段 genre、mainCharacter、pointOfView、premise、theme、setting、readerPromise、storyStages、extra。"""),
+    Volume("下一卷规划", """按已确认的剧情设计下一卷。只返回 JSON {"title":"卷名","direction":"主要冲突、阶段推进、卷末落点、未回收伏笔"}。"""),
+    Context("压缩上下文", "把提供的书稿及记忆压缩为可用于续写的上下文摘要。分别保留设定、已确认事件和未回收伏笔。"),
     Close("定稿交接", """只返回 JSON {"recap":"已发生剧情","bridge":"下章必接铺垫","lessons":[{"kind":"keep","text":"经验"}],"directions":[{"title":"走向","detail":"推进建议"}],"threads":[{"title":"线索","quote":"逐字原文","note":"待解问题"}],"relations":[{"from":"人物","to":"人物","label":"关系变化","quote":"包含两个人名的原文"}],"events":[{"title":"事件","quote":"逐字原文","note":"事实说明"}],"links":[{"from":"本章事件标题或以往事件 id","to":"本章事件标题","label":"因果关系","quote":"明确因果的逐字原文"}]}。逐字引用当前章原文，证据不足时返回空数组，推演只写在备选走向。""")
 }
 
@@ -127,6 +133,15 @@ internal fun writingContext(
     val required = JSONObject().put("书名", book.string("title")).put("章节", chapter.string("title"))
         .put("作者要求", instruction).put("目标正文", target)
     if (selected != null) required.put("目标段落", selected)
+    if (intent == WritingIntent.Batch && selected != null) required.put("审阅原文", JSONArray(selected.objects().map {
+        JSONObject().put("chapterId", chapter.string("id")).put("paragraphId", it.string("id")).put("text", it.string("before"))
+    }))
+    if (intent in evidenceIntents) required.put("审阅原文", JSONArray(evidenceFor(chapter).filter { it.string("text").isNotBlank() }))
+    if (intent == WritingIntent.Extract) required.put("资料类型", JSONArray(evidenceKinds))
+    if (intent == WritingIntent.State) required.put("可提案条目", JSONArray(stateTargets(book)))
+    if (intent == WritingIntent.Reference) required.put("样本", instruction.ifBlank { target })
+    if (intent == WritingIntent.Profile) required.put("作者构思", instruction.ifBlank { target })
+    if (intent == WritingIntent.Close) required.put("目标段落", target)
     val plan = chapter.optJSONObject("plan")?.string("summary").orEmpty()
     if (plan.isNotBlank()) required.put("章节摘要", plan)
     if (intent == WritingIntent.Chapter) require(plan.isNotBlank()) { "请先确认章节规划，再生成初稿。" }
@@ -151,6 +166,8 @@ internal fun writingContext(
         WritingIntent.Summary -> "summary"
         WritingIntent.Chapter -> "chapter"
         WritingIntent.Review -> "chapter-review"
+        WritingIntent.State -> "state-proposal"
+        WritingIntent.Reference -> "reference-analysis"
         else -> null
     }
     if (template != null) optional["任务模板"] = creative?.optJSONObject("templates")?.string(template).orEmpty()
@@ -204,9 +221,13 @@ internal fun WritingAiDialog(
         var target = ""
         var spanOffset = 0
         var segments: List<JSONObject> = emptyList()
+        var sourceChapter = JSONObject()
+        var sourceBook = JSONObject()
         model.generate(runId, task.label, prepare = {
             val snapshot = export(book.id)
             val source = snapshot.records("volumes").flatMap { it.records("chapters") }.first { it.string("id") == chapter.id }
+            sourceChapter = source
+            sourceBook = snapshot
             baseline = source.string("text")
             val spans = paragraphSpans(baseline)
             val caret = selection.start.coerceIn(0, baseline.length)
@@ -225,6 +246,10 @@ internal fun WritingAiDialog(
                         .put("id", existing[index].string("id")).put("start", candidate.start).put("before", candidate.text)
                 }.take(40)
                 require(segments.isNotEmpty()) { "选中的范围没有可改写段落。" }
+                mutateChapter(book.id, chapter.id) { it.put("paragraphs", source.array("paragraphs")) }
+            } else if (task in evidenceIntents) {
+                editChapter(source, baseline, ensureParagraphs = true)
+                require(evidenceFor(source).any { it.string("text").isNotBlank() }) { "请先写下用于审阅的正文。" }
                 mutateChapter(book.id, chapter.id) { it.put("paragraphs", source.array("paragraphs")) }
             } else if (task == WritingIntent.Paragraph) {
                 editChapter(source, baseline, ensureParagraphs = true)
@@ -266,6 +291,12 @@ internal fun WritingAiDialog(
                 }
                 WritingIntent.Rewrite -> require(safeRevision(target, reply)) { "候选稿改变了原正文的 Markdown 结构。" }
                 WritingIntent.Close -> checkedHandoff(JSONObject(stripJsonFence(reply)), JSONObject().put("text", baseline))
+                WritingIntent.Review, WritingIntent.Extract, WritingIntent.State -> {
+                    val items = JSONObject(stripJsonFence(reply)).getJSONArray("items")
+                    val verified = checkedEvidence(items, task, sourceChapter, sourceBook)
+                    body.put("items", JSONArray(verified))
+                }
+                WritingIntent.Reference, WritingIntent.Profile, WritingIntent.Volume -> JSONObject(stripJsonFence(reply))
                 else -> Unit
             }
             mutateChapter(book.id, chapter.id) { saved ->
@@ -291,11 +322,47 @@ internal fun WritingAiDialog(
                 model.clearGeneration(runId)
                 return@perform
             }
+            if (accept && task in evidenceIntents) {
+                val snapshot = export(book.id)
+                val source = snapshot.records("volumes").flatMap { it.records("chapters") }.first { it.string("id") == chapter.id }
+                val items = current.records("items").filter { it.string("candidateId") in selected }
+                require(items.isNotEmpty()) { "请选择候选条目。" }
+                val verified = checkedEvidence(JSONArray(items), task, source, snapshot)
+                mutateChapter(book.id, chapter.id, { useEvidence(it, task, verified) }) { saved ->
+                    check(saved.optJSONObject("nativeReview")?.string("id") == current.string("id")) { "候选已经变更。" }
+                    val remaining = current.records("items").filterNot { it.string("candidateId") in selected }
+                    if (remaining.isEmpty()) saved.remove("nativeReview")
+                    else saved.put("nativeReview", JSONObject(current.toString()).put("items", JSONArray(remaining)))
+                }
+                model.clearGeneration(runId)
+                return@perform
+            }
+            if (accept && task == WritingIntent.Volume) {
+                val volume = JSONObject(stripJsonFence(change))
+                val title = volume.string("title")
+                require(title.isNotBlank()) { "卷名不能为空。" }
+                addVolume(book.id, title, volume.string("direction"))
+            }
             val applyToBook: ((JSONObject) -> Unit)? = if (!accept) null else when (task) {
                 WritingIntent.Outline -> { data -> data.put("outline", change) }
                 WritingIntent.Settings -> { data -> data.put("notes", change) }
-                WritingIntent.Review -> { data -> data.obj("creative").array("reviews")
-                    .put(JSONObject().put("id", newId()).put("chapterId", chapter.id).put("body", change)) }
+                WritingIntent.Context -> { data -> data.obj("context").put("summary", change) }
+                WritingIntent.Reference -> { data ->
+                    val sample = JSONObject(stripJsonFence(change))
+                    val record = JSONObject().put("id", newId()).put("title", "AI 参考卡").put("enabled", true)
+                    listOf("structure", "rhythm", "viewpoint", "conflict", "hook").forEach { field ->
+                        require(sample.string(field).isNotBlank()) { "参考卡缺少 $field。" }
+                        record.put(field, sample.string(field))
+                    }
+                    data.obj("creative").array("references").put(record)
+                }
+                WritingIntent.Profile -> { data ->
+                    val proposal = JSONObject(stripJsonFence(change))
+                    val profile = data.obj("aiSetup")
+                    listOf("genre", "mainCharacter", "pointOfView", "premise", "theme", "setting", "readerPromise",
+                        "storyStages", "extra").filter { proposal.string(it).isNotBlank() }.forEach { profile.put(it, proposal.string(it)) }
+                    profile.put("configured", true)
+                }
                 else -> null
             }
             mutateChapter(book.id, chapter.id, applyToBook) { saved ->
@@ -381,6 +448,19 @@ internal fun WritingAiDialog(
                         }
                         if (run.text.isNotBlank()) Text(run.text)
                     }
+                } else if (intentForReview in evidenceIntents) {
+                    review.records("items").forEach { item ->
+                        val id = item.string("candidateId")
+                        Row {
+                            Checkbox(id in selected) { selected = if (it) selected + id else selected - id }
+                            Column {
+                                Text(item.string("title").ifBlank { item.string("role", item.string("kind")) },
+                                    style = MaterialTheme.typography.titleMedium)
+                                Text(item.string("body").ifBlank { item.string("note") })
+                                Text(item.string("quote"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                 } else if (intentForReview == WritingIntent.Batch) {
                     review.records("items").forEach { item ->
                         val id = item.string("id")
@@ -413,7 +493,7 @@ internal fun WritingAiDialog(
         confirmButton = {
             when {
                 generating -> TextButton(onClick = { model.stopGeneration(runId) }) { Text("停止") }
-                review != null -> TextButton(enabled = if (intentForReview == WritingIntent.Batch) selected.isNotEmpty()
+                review != null -> TextButton(enabled = if (intentForReview == WritingIntent.Batch || intentForReview in evidenceIntents) selected.isNotEmpty()
                     else change.isNotBlank(), onClick = { decide(true) }) { Text("采用") }
                 else -> TextButton(onClick = ::generate) { Text("生成候选") }
             }
