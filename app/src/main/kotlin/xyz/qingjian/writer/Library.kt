@@ -95,10 +95,11 @@ internal data class BookVersionEntry(val id: Long, val createdAt: Long)
 internal data class ShelfEntry(val id: String, val title: String, val chapterCount: Int, val cover: String)
 internal data class ChapterEntry(val id: String, val volumeId: String, val title: String, val complete: Boolean)
 internal data class ChapterStory(val id: String, val title: String, val volumeId: String, val payload: String)
+internal const val standaloneRoleplayId = "_qingjian_standalone_roleplay"
 
 @Dao
 internal interface LibraryDao {
-    @Query("SELECT id, title, (SELECT COUNT(*) FROM chapters WHERE bookId = books.id) AS chapterCount, cover FROM books ORDER BY updatedAt DESC")
+    @Query("SELECT id, title, (SELECT COUNT(*) FROM chapters WHERE bookId = books.id) AS chapterCount, cover FROM books WHERE id <> '_qingjian_standalone_roleplay' ORDER BY updatedAt DESC")
     fun shelf(): Flow<List<ShelfEntry>>
 
     @Query("SELECT * FROM books WHERE id = :id")
@@ -107,7 +108,7 @@ internal interface LibraryDao {
     @Query("SELECT * FROM books WHERE id = :id")
     fun observeBook(id: String): Flow<BookRow?>
 
-    @Query("SELECT * FROM books WHERE id = :id OR title = :title ORDER BY (id = :id) DESC, updatedAt DESC LIMIT 1")
+    @Query("SELECT * FROM books WHERE id <> '_qingjian_standalone_roleplay' AND (id = :id OR title = :title) ORDER BY (id = :id) DESC, updatedAt DESC LIMIT 1")
     suspend fun matchingBook(id: String, title: String): BookRow?
 
     @Query("SELECT * FROM volumes WHERE bookId = :id ORDER BY position")
@@ -195,6 +196,14 @@ internal class Library(context: Context) {
     fun bookVersions(bookId: String) = dao.bookVersions(bookId)
 
     suspend fun create(title: String) = store(Manuscript.create(title), null)
+
+    suspend fun standaloneRoleplay() = write {
+        if (dao.book(standaloneRoleplayId) == null) {
+            val data = JSONObject()
+            roleplay(data)
+            dao.putBook(BookRow(standaloneRoleplayId, "文本扮演", "", System.currentTimeMillis(), "", data.toString()))
+        }
+    }
 
     suspend fun matchingBook(book: JSONObject) =
         dao.matchingBook(book.string("id"), book.string("title"))

@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,26 +15,33 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
 import io.github.suqi8.coui.kmp.basic.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import io.github.suqi8.coui.kmp.basic.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import io.github.suqi8.coui.kmp.basic.TopAppBar
 import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import io.github.suqi8.coui.kmp.basic.RadioButton
+import io.github.suqi8.coui.kmp.basic.CardListGroup
+import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
+import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,7 +56,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,10 +65,11 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: () -> Unit) {
+internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: () -> Unit, roleplay: () -> Unit) {
     val books by model.library.shelf.collectAsStateWithLifecycle(initialValue = null)
     val studio by model.studioStatus.collectAsStateWithLifecycle()
     val remote by model.studioBooks.collectAsStateWithLifecycle()
+    val cards by model.shelfCards.collectAsStateWithLifecycle()
     var creating by rememberSaveable { mutableStateOf(false) }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         if (it != null) model.previewImport(it)
@@ -79,7 +85,10 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 color = MaterialTheme.colorScheme.background,
                 largeTitleColor = MaterialTheme.colorScheme.onBackground,
                 showDivider = false,
-                actions = { IconButton(onClick = settings) { Icon(Icons.Default.Settings, "设置") } },
+                actions = {
+                    IconButton(onClick = roleplay) { Icon(Icons.Default.Person, "文本扮演") }
+                    IconButton(onClick = settings) { Icon(Icons.Default.Settings, "设置") }
+                },
                 scrollBehavior = scroll
             )
         },
@@ -106,35 +115,30 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 }
             }
         } else if (entries != null) {
-            LazyColumn(
-                Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
+            val tools: @Composable () -> Unit = {
+                Column {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedButton(onClick = pickBackup) { Text("导入备份") }
                         if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
                     }
-                }
-                items(entries, key = ShelfEntry::id) { book ->
-                    Card(
-                        onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                    ) {
-                        Row(
-                            Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(15.dp)
-                        ) {
-                            Cover(book)
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(book.title, style = MaterialTheme.typography.titleLarge,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                Text("${book.chapterCount} 章", style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(cards, { model.setShelfCards(true) }, label = { Text("卡片") })
+                        FilterChip(!cards, { model.setShelfCards(false) }, label = { Text("横排") })
                     }
+                }
+            }
+            val listModifier = Modifier.fillMaxSize().padding(padding)
+            val gutters = PaddingValues(start = 20.dp, end = 20.dp, bottom = 96.dp)
+            if (cards) LazyVerticalGrid(
+                columns = GridCells.Adaptive(142.dp), modifier = listModifier, contentPadding = gutters,
+                verticalArrangement = Arrangement.spacedBy(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }) { tools() }
+                items(entries, key = ShelfEntry::id) { book -> BookTile(book, true, open) }
+            } else {
+                LazyColumn(listModifier, contentPadding = gutters, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item { tools() }
+                    items(entries, key = ShelfEntry::id) { book -> BookTile(book, false, open) }
                 }
             }
         }
@@ -159,11 +163,35 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
 }
 
 @Composable
-private fun Cover(book: ShelfEntry) {
+private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
+    Card(onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        val details: @Composable () -> Unit = {
+            Text(book.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${book.chapterCount} 章", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (grid) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Cover(book, Modifier.fillMaxWidth().size(height = 144.dp, width = 132.dp))
+                details()
+            }
+        } else {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+                Cover(book, Modifier.size(width = 52.dp, height = 68.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) { details() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Cover(book: ShelfEntry, shape: Modifier) {
     val bytes by produceState<ByteArray?>(null, book.cover) {
         value = withContext(Dispatchers.Default) { coverImage(book.cover) }
     }
-    val modifier = Modifier.size(width = 52.dp, height = 68.dp).clip(RoundedCornerShape(9.dp))
+    val modifier = shape.clip(RoundedCornerShape(9.dp))
     if (bytes != null) {
         AsyncImage(bytes, null, modifier, contentScale = ContentScale.Crop)
     } else {
@@ -180,12 +208,13 @@ internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Uni
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("外观", style = MaterialTheme.typography.titleLarge)
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                ThemeMode.entries.forEach { item ->
-                    ListItem(
-                        headlineContent = { Text(item.label) },
-                        modifier = Modifier.clickable(role = Role.RadioButton) { model.setTheme(item) },
-                        trailingContent = { RadioButton(selected = mode == item, onClick = null) }
-                    )
+                CardListGroup {
+                    ThemeMode.entries.forEach { option ->
+                        item(option.name) {
+                            RadioButtonPreference(option.label, mode == option, { model.setTheme(option) },
+                                radioButtonLocation = RadioButtonLocation.End)
+                        }
+                    }
                 }
             }
             ProviderSettings(model)

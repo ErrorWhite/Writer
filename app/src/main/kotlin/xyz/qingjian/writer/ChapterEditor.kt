@@ -1,6 +1,5 @@
 package xyz.qingjian.writer
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,7 +41,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -52,18 +49,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.commonmark.node.BlockQuote
-import org.commonmark.node.Code
-import org.commonmark.node.FencedCodeBlock
-import org.commonmark.node.HardLineBreak
-import org.commonmark.node.Heading
-import org.commonmark.node.IndentedCodeBlock
-import org.commonmark.node.ListItem
 import org.commonmark.node.Node
-import org.commonmark.node.OrderedList
-import org.commonmark.node.SoftLineBreak
-import org.commonmark.node.Text as MarkdownText
-import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 
 @Composable
@@ -291,17 +277,14 @@ private fun HistoryDialog(model: WriterModel, chapter: ChapterRow, dismiss: () -
 private val words = Regex("[\\p{IsHan}]|[\\p{L}\\p{N}&&[^\\p{IsHan}]]+")
 private fun manuscriptWordCount(text: String) = words.findAll(text).count()
 
-private val markdownParser = Parser.builder().build()
-private data class PreviewBlock(val node: Node, val text: String)
+private val markdownParser = Parser.builder().extensions(writingExtensions).build()
 
 @Composable
 private fun MarkdownPreview(text: String) {
-    val blocks by produceState(emptyList<PreviewBlock>(), text) {
+    val blocks by produceState(emptyList<Node>(), text) {
         value = withContext(Dispatchers.Default) {
             val parsed = markdownParser.parse(manuscriptMarkdown(text))
-            generateSequence(parsed.firstChild) { it.next }.map { node ->
-                PreviewBlock(node, markdownText(node))
-            }.toList()
+            generateSequence(parsed.firstChild) { it.next }.toList()
         }
     }
     LazyColumn(
@@ -309,35 +292,6 @@ private fun MarkdownPreview(text: String) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         if (text.isBlank()) item { Text("本章尚无正文") }
-        items(blocks) { block ->
-            when (block.node) {
-                is ThematicBreak -> HorizontalDivider(Modifier.fillMaxWidth(.28f))
-                is Heading -> Text(block.text, style = MaterialTheme.typography.titleLarge)
-                is FencedCodeBlock, is IndentedCodeBlock -> Text(
-                    block.text,
-                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
-                    fontFamily = FontFamily.Monospace
-                )
-                is BlockQuote -> Text(block.text, Modifier.padding(start = 14.dp), fontStyle = FontStyle.Italic)
-                else -> Text(block.text, style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 29.sp))
-            }
-        }
-    }
-}
-
-private fun markdownText(node: Node): String {
-    val children = generateSequence(node.firstChild) { it.next }
-    return when (node) {
-        is MarkdownText -> node.literal
-        is Code -> node.literal
-        is FencedCodeBlock -> node.literal.trimEnd()
-        is IndentedCodeBlock -> node.literal.trimEnd()
-        is SoftLineBreak, is HardLineBreak -> "\n"
-        is OrderedList -> children.mapIndexed { index, item ->
-            "${(node.markerStartNumber ?: 1) + index}. ${markdownText(item)}"
-        }.joinToString("\n")
-        is org.commonmark.node.BulletList -> children.joinToString("\n") { "• ${markdownText(it)}" }
-        is BlockQuote, is ListItem -> children.joinToString("\n", transform = ::markdownText)
-        else -> children.joinToString("", transform = ::markdownText)
+        items(blocks) { node -> ManuscriptBlock(node) }
     }
 }

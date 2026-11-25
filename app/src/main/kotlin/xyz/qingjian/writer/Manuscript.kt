@@ -77,6 +77,7 @@ internal object Manuscript {
             }
         }
         if (book.string("id").isBlank()) book.put("id", newId())
+        require(book.string("id") != standaloneRoleplayId) { "这是扮演工作区标识，请导入全书备份。" }
         if (chapters.none { it.string("id") == book.string("activeId") }) {
             book.put("activeId", chapters.first().string("id"))
         }

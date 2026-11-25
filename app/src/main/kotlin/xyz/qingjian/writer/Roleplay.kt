@@ -144,3 +144,31 @@ internal fun worldBookMatches(world: JSONObject?, query: String, outerBudget: In
 
 internal fun JSONObject.strings(key: String): List<String> =
     optJSONArray(key)?.let { list -> List(list.length()) { list.opt(it) as? String }.filterNotNull() }.orEmpty()
+
+internal fun importedWorldBook(source: JSONObject): List<JSONObject> {
+    val entries = when (val root = source.opt("entries")) {
+        is JSONArray -> List(root.length()) { root.optJSONObject(it) }.filterNotNull()
+        is JSONObject -> root.keys().asSequence().mapNotNull { root.optJSONObject(it) }.toList()
+        else -> error("世界书 JSON 缺少 entries。")
+    }
+    fun keys(value: Any?): List<String> = when (value) {
+        is JSONArray -> List(value.length()) { value.opt(it) as? String }.filterNotNull()
+        is String -> value.split(',', '，', '、', '\n')
+        else -> emptyList()
+    }.map { it.trim().take(80) }.filter(String::isNotBlank).distinct().take(32)
+    return entries.take(800).filter { it.string("content").isNotBlank() }.map { item ->
+        val primary = keys(item.opt("keys") ?: item.opt("key"))
+        val secondary = if (item.has("selective") && !item.optBoolean("selective")) emptyList()
+            else keys(item.opt("secondary") ?: item.opt("keysecondary"))
+        val logic = item.string("logic", listOf("any", "not-all", "not-any", "all")
+            .getOrElse(item.optInt("selectiveLogic")) { "any" })
+        JSONObject(item.toString()).put("id", newId())
+            .put("title", item.string("title", item.string("comment")).trim().ifBlank { primary.firstOrNull() ?: "世界书条目" }.take(80))
+            .put("content", item.string("content").trim().take(9000))
+            .put("keys", JSONArray(primary)).put("secondary", JSONArray(secondary))
+            .put("logic", logic).put("enabled", item.optBoolean("enabled", !item.optBoolean("disable")))
+            .put("always", item.optBoolean("always", item.optBoolean("constant")))
+            .put("priority", item.optInt("priority", item.optInt("order", 100)).coerceIn(0, 1000))
+            .put("recursionDelay", item.optInt("recursionDelay", item.optInt("delayUntilRecursion")).coerceIn(0, 3))
+    }
+}

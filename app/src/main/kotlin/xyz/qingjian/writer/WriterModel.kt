@@ -70,6 +70,9 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val mutableAccounts = MutableStateFlow<List<ProviderAccount>?>(null)
     val accounts = mutableAccounts.asStateFlow()
     private val selectedAccountKey = stringPreferencesKey("active_provider_account")
+    private val shelfLayoutKey = stringPreferencesKey("shelf_layout")
+    val shelfCards = application.preferences.data.map { it[shelfLayoutKey] != "rows" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     private val imagesKey = stringPreferencesKey("images_enabled")
     val imagesEnabled = application.preferences.data.map { it[imagesKey] == "true" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -114,6 +117,10 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.System)
 
     fun setTheme(mode: ThemeMode) = perform { application.preferences.edit { it[themeKey] = mode.name } }
+
+    fun setShelfCards(cards: Boolean) {
+        viewModelScope.launch { application.preferences.edit { it[shelfLayoutKey] = if (cards) "cards" else "rows" } }
+    }
 
     fun saveAccount(account: ProviderAccount) = perform {
         require(account.name.isNotBlank() && account.model.isNotBlank() && account.key.isNotBlank()) {
@@ -428,6 +435,19 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         }
         mutateBook(bookId) { it.obj("skills").array("custom").put(record) }
         notice("已导入写作技能")
+    }
+
+    fun importWorldBook(bookId: String, uri: Uri) = perform {
+        val entries = withContext(Dispatchers.IO) {
+            val data = read(uri, 12, "世界书不能超过 12 MB。").toString(Charsets.UTF_8)
+            importedWorldBook(JSONObject(data.removePrefix("\uFEFF")))
+        }
+        mutateBook(bookId) {
+            val world = it.obj("creative").obj("worldBook").array("entries")
+            require(world.length() + entries.size <= 800) { "世界书最多支持 800 条。" }
+            entries.forEach { row -> world.put(row) }
+        }
+        notice("已导入 ${entries.size} 条世界书")
     }
 
     fun importAsset(bookId: String, uri: Uri) = perform {

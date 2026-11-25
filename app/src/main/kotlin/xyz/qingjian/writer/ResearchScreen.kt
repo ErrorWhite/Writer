@@ -1,5 +1,7 @@
 package xyz.qingjian.writer
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -46,6 +48,14 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
     var delete by remember { mutableStateOf<JSONObject?>(null) }
     val payload = remember(book.payload) { JSONObject(book.payload) }
     val entries = remember(payload, section) { listFor(payload, section).objects() }
+    val worldImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
+        if (it != null) model.importWorldBook(book.id, it)
+    }
+    val worldExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) {
+        if (it != null) model.exportRoleplay(it) {
+            payload.obj("creative").obj("worldBook").toString(2).toByteArray(Charsets.UTF_8)
+        }
+    }
     val title = section.label
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -60,6 +70,12 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
         Row(Modifier.fillMaxWidth()) {
             OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, label = { Text("搜索$title") })
             TextButton(onClick = { edit = JSONObject().put("id", newId()) }) { Text("添加$title") }
+        }
+        if (section == WorkCollection.World) Row {
+            TextButton(onClick = { worldImport.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) {
+                Text("导入世界书")
+            }
+            TextButton(onClick = { worldExport.launch(safeFileName(book.title) + "-世界书.json") }) { Text("导出世界书") }
         }
         val filtered = entries.filter {
             query.isBlank() || it.string("title").contains(query, ignoreCase = true) ||

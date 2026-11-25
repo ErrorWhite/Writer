@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -20,6 +22,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -135,8 +138,20 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
 
     Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = "shelf") {
-            composable("shelf") { ShelfScreen(model, openBook, { nav.navigate("settings") }) }
+            composable("shelf") {
+                ShelfScreen(model, openBook, { nav.navigate("settings") }) {
+                    model.perform { standaloneRoleplay(); nav.navigate("roleplay") }
+                }
+            }
             composable("settings") { SettingsScreen(model, mode) { nav.popBackStack() } }
+            composable("roleplay") {
+                val workspace by remember { model.library.book(standaloneRoleplayId) }
+                    .collectAsStateWithLifecycle(initialValue = null)
+                Scaffold(topBar = { BackBar("文本扮演", { nav.popBackStack() }) },
+                    containerColor = MaterialTheme.colorScheme.background) { padding ->
+                    workspace?.let { RoleplayScreen(model, it, Modifier.padding(padding).consumeWindowInsets(padding).imePadding()) }
+                }
+            }
             composable("book/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
                 BookScreen(model, requireNotNull(it.arguments?.getString("id"))) { nav.popBackStack() }
             }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -33,6 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mangi.eta.agent.roleplay.CharacterCardCodec
+import io.github.mangi.eta.agent.roleplay.CharacterCardCompatibility
+import coil.compose.AsyncImage
+import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -48,12 +52,18 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
     var create by remember { mutableStateOf(false) }
     var useCard by remember { mutableStateOf<JSONObject?>(null) }
     var sessionOptions by remember { mutableStateOf(false) }
+    var editCard by remember { mutableStateOf<JSONObject?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importRoleplayCard(book.id, uri) { selected = it }
     }
 
     Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val encoded = card?.string("png").orEmpty()
+            val avatar = remember(encoded) {
+                if (encoded.isBlank()) null else runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
+            }
+            if (avatar != null) AsyncImage(avatar, null, Modifier.size(46.dp).padding(end = 6.dp))
             Text(session?.string("title")?.ifBlank { card?.string("name") ?: "文本扮演" } ?: "文本扮演",
                 Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
             TextButton(onClick = { menu = true }) { Text("会话") }
@@ -64,6 +74,7 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
                         onClick = { selected = item.string("id"); menu = false })
                 }
                 if (session != null) DropdownMenuItem({ Text("当前会话设置") }, onClick = { menu = false; sessionOptions = true })
+                if (card != null) DropdownMenuItem({ Text("编辑当前角色") }, onClick = { menu = false; editCard = card })
                 DropdownMenuItem({ Text("新建角色") }, onClick = { menu = false; create = true })
                 DropdownMenuItem({ Text("导入酒馆角色卡") }, onClick = {
                     menu = false
@@ -121,6 +132,21 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
     }
     if (sessionOptions && session != null && card != null) {
         RoleplaySessionDialog(model, book.id, session, card) { sessionOptions = false }
+    }
+    editCard?.let { existing ->
+        RoleplayCardDialog(existing, dismiss = { editCard = null }) { edited ->
+            model.perform {
+                mutateBook(book.id) { data ->
+                    val list = roleplay(data).array("cards")
+                    val index = list.objects().indexOfFirst { it.string("id") == existing.string("id") }
+                    check(index >= 0) { "角色已不存在。" }
+                    val merged = JSONObject(list.getJSONObject(index).toString())
+                    edited.keys().asSequence().filterNot { it == "id" }.forEach { key -> merged.put(key, edited.get(key)) }
+                    list.put(index, merged)
+                }
+                editCard = null
+            }
+        }
     }
 }
 
@@ -245,27 +271,40 @@ private fun RoleplayConversation(
 }
 
 @Composable
-private fun RoleplayCardDialog(dismiss: () -> Unit, saved: (JSONObject) -> Unit) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var description by rememberSaveable { mutableStateOf("") }
-    var scene by rememberSaveable { mutableStateOf("") }
-    var greeting by rememberSaveable { mutableStateOf("") }
+private fun RoleplayCardDialog(source: JSONObject? = null, dismiss: () -> Unit, saved: (JSONObject) -> Unit) {
+    val card = remember(source) { source?.let(::etaCard) }
+    var name by rememberSaveable { mutableStateOf(card?.name.orEmpty()) }
+    var description by rememberSaveable { mutableStateOf(card?.description.orEmpty()) }
+    var personality by rememberSaveable { mutableStateOf(card?.personality.orEmpty()) }
+    var scene by rememberSaveable { mutableStateOf(card?.scenario.orEmpty()) }
+    var greeting by rememberSaveable { mutableStateOf(card?.firstMessage.orEmpty()) }
+    var alternates by rememberSaveable { mutableStateOf(card?.alternateGreetings.orEmpty().joinToString("\n---\n")) }
+    var sample by rememberSaveable { mutableStateOf(card?.exampleMessages.orEmpty()) }
     AlertDialog(
-        onDismissRequest = dismiss, title = { Text("新建角色") },
+        onDismissRequest = dismiss, title = { Text(if (card == null) "新建角色" else "编辑角色") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("名称") })
                 OutlinedTextField(description, { description = it }, label = { Text("角色设定") })
+                OutlinedTextField(personality, { personality = it }, label = { Text("性格") })
                 OutlinedTextField(scene, { scene = it }, label = { Text("场景") })
                 OutlinedTextField(greeting, { greeting = it }, label = { Text("开场白") })
+                OutlinedTextField(alternates, { alternates = it }, label = { Text("备用开场白，用独立一行 --- 分隔") })
+                OutlinedTextField(sample, { sample = it }, label = { Text("示例对话") })
+                card?.let { original ->
+                    val warnings = remember(original) { CharacterCardCompatibility.warnings(original) }
+                    warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
             }
         },
         confirmButton = {
             TextButton(enabled = name.isNotBlank(), onClick = {
-                saved(writerCard(CharacterCardCodec.create(name.trim()).withEdits(
-                    description = description, scenario = scene, firstMessage = greeting
+                saved(writerCard((card ?: CharacterCardCodec.create(name.trim())).withEdits(
+                    name = name.trim(), description = description, personality = personality,
+                    scenario = scene, firstMessage = greeting, exampleMessages = sample,
+                    alternateGreetings = alternates.split("\n---\n").map(String::trim).filter(String::isNotBlank)
                 )))
-            }) { Text("创建") }
+            }) { Text(if (card == null) "创建" else "保存") }
         }, dismissButton = { TextButton(onClick = dismiss) { Text("取消") } }
     )
 }
@@ -277,6 +316,8 @@ private fun RoleplaySessionDialog(model: WriterModel, bookId: String, session: J
     var user by rememberSaveable(id) { mutableStateOf(session.string("userName", "玩家")) }
     var persona by rememberSaveable(id) { mutableStateOf(session.string("persona")) }
     var memory by rememberSaveable(id) { mutableStateOf(session.string("memory")) }
+    var erase by rememberSaveable(id) { mutableStateOf(false) }
+    val requests by model.generations.collectAsStateWithLifecycle()
     val report = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) model.exportRoleplay(uri) { session.toString(2).toByteArray(Charsets.UTF_8) }
     }
@@ -299,6 +340,9 @@ private fun RoleplaySessionDialog(model: WriterModel, bookId: String, session: J
                 if (card.has("png")) TextButton(onClick = { png.launch(safeFileName(card.string("name")) + ".png") }) {
                     Text("导出角色卡 PNG")
                 }
+                TextButton(enabled = requests["roleplay:$bookId:$id"]?.running != true, onClick = { erase = true }) {
+                    Text("删除会话", color = MaterialTheme.colorScheme.error)
+                }
             }
         },
         dismissButton = { TextButton(onClick = dismiss) { Text("取消") } },
@@ -313,5 +357,21 @@ private fun RoleplaySessionDialog(model: WriterModel, bookId: String, session: J
                 }
             }) { Text("保存") }
         }
+    )
+    if (erase) AlertDialog(
+        onDismissRequest = { erase = false }, title = { Text("删除会话？") },
+        text = { Text("该会话的消息和记忆会从本机删除。") },
+        confirmButton = {
+            TextButton(onClick = {
+                model.perform {
+                    mutateBook(bookId) { data ->
+                        val room = roleplay(data)
+                        room.put("sessions", JSONArray(room.records("sessions").filterNot { it.string("id") == id }))
+                    }
+                    model.clearGeneration("roleplay:$bookId:$id")
+                    dismiss()
+                }
+            }) { Text("删除") }
+        }, dismissButton = { TextButton(onClick = { erase = false }) { Text("取消") } }
     )
 }
