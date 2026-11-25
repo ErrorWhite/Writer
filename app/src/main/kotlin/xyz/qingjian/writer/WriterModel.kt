@@ -54,6 +54,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val resolver: ContentResolver = application.contentResolver
     private val lock = Mutex()
     private val writingPositions = application.getSharedPreferences("writing_positions", 0)
+    private val mutableLastOpenedBook = MutableStateFlow(writingPositions.getString("book", null))
+    val lastOpenedBook = mutableLastOpenedBook.asStateFlow()
     private var writer: Job? = null
     private val mutableDrafts = MutableStateFlow<Map<DraftKey, Draft>>(emptyMap())
     val drafts = mutableDrafts.asStateFlow()
@@ -147,6 +149,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
 
     fun openedBook(bookId: String) {
         writingPositions.edit().putString("book", bookId).apply()
+        mutableLastOpenedBook.value = bookId
     }
 
     fun writingPosition(key: DraftKey): WritingPosition {

@@ -105,7 +105,9 @@ internal data class BookVersion(
 
 internal data class BookVersionEntry(val id: Long, val createdAt: Long)
 
-internal data class ShelfEntry(val id: String, val title: String, val chapterCount: Int, val cover: String)
+internal data class ShelfEntry(
+    val id: String, val title: String, val chapterCount: Int, val cover: String, val activeChapterTitle: String?
+)
 internal data class ChapterEntry(val id: String, val volumeId: String, val title: String, val complete: Boolean)
 internal data class ChapterStory(val id: String, val title: String, val volumeId: String, val payload: String)
 internal const val standaloneRoleplayId = "_qingjian_standalone_roleplay"
@@ -123,7 +125,12 @@ internal interface LibraryDao {
     @Query("DELETE FROM writing_journal WHERE bookId = :bookId AND chapterId = :chapterId")
     suspend fun clearEdit(bookId: String, chapterId: String)
 
-    @Query("SELECT id, title, (SELECT COUNT(*) FROM chapters WHERE bookId = books.id) AS chapterCount, cover FROM books WHERE id <> '_qingjian_standalone_roleplay' ORDER BY updatedAt DESC")
+    @Query("""
+        SELECT id, title, cover,
+          (SELECT COUNT(*) FROM chapters WHERE bookId = books.id) AS chapterCount,
+          (SELECT title FROM chapters WHERE bookId = books.id AND id = books.activeId) AS activeChapterTitle
+        FROM books WHERE id <> '_qingjian_standalone_roleplay' ORDER BY updatedAt DESC
+    """)
     fun shelf(): Flow<List<ShelfEntry>>
 
     @Query("SELECT * FROM books WHERE id = :id")

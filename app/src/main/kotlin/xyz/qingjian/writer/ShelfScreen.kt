@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
@@ -36,6 +39,7 @@ import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.TopAppBar
 import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
 import io.github.suqi8.coui.kmp.basic.SegmentButton
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
 import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
 import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
@@ -43,6 +47,7 @@ import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardDefaults
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.theme.COUITheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -63,13 +69,29 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private val lightBookCovers = listOf(
+    Color(0xFFD8E3F0) to Color(0xFFB8CDE2),
+    Color(0xFFDCE8E0) to Color(0xFFB6CEC0),
+    Color(0xFFF0E7D5) to Color(0xFFDAC6A6),
+    Color(0xFFE7E0EC) to Color(0xFFCBBBD8)
+)
+
+private val darkBookCovers = listOf(
+    Color(0xFF3A526D) to Color(0xFF263A54),
+    Color(0xFF3B574F) to Color(0xFF293B35),
+    Color(0xFF574C3A) to Color(0xFF3E3428),
+    Color(0xFF594C64) to Color(0xFF3C3146)
+)
+
 @Composable
 internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: () -> Unit, roleplay: () -> Unit) {
     val books by model.library.shelf.collectAsStateWithLifecycle(initialValue = null)
     val studio by model.studioStatus.collectAsStateWithLifecycle()
     val remote by model.studioBooks.collectAsStateWithLifecycle()
     val cards by model.shelfCards.collectAsStateWithLifecycle()
+    val lastOpened by model.lastOpenedBook.collectAsStateWithLifecycle()
     var creating by rememberSaveable { mutableStateOf(false) }
+    var importing by rememberSaveable { mutableStateOf(false) }
     val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         if (it != null) model.previewImport(it)
     }
@@ -116,30 +138,49 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 }
             }
         } else if (entries != null) {
+            val recent = entries.firstOrNull { it.id == lastOpened }
+            val remaining = if (recent == null) entries else entries.filter { it.id != recent.id }
             val tools: @Composable () -> Unit = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    RecentBook(entries.first(), open)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        SegmentButton(listOf("封面", "列表"), if (cards) 0 else 1, { model.setShelfCards(it == 0) },
-                            modifier = Modifier.weight(1f))
-                        TextButton(onClick = pickBackup) { Text("导入") }
-                        if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
+                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    if (recent != null) RecentBook(recent, open)
+                    if (remaining.isNotEmpty()) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Text("作品", Modifier.weight(1f), style = WriterTheme.typography.titleLarge)
+                            SegmentButton(listOf("封面", "列表"), if (cards) 0 else 1, { model.setShelfCards(it == 0) },
+                                modifier = Modifier.width(134.dp))
+                            Box {
+                                ToolbarTextButton(text = "导入", onClick = {
+                                    if (studio == null) pickBackup() else importing = true
+                                })
+                                DropdownMenu(importing, { importing = false }) {
+                                    DropdownMenuItem("导入书稿备份", onClick = { importing = false; pickBackup() })
+                                    DropdownMenuItem("服务器书架", onClick = { importing = false; model.listStudioBooks() })
+                                }
+                            }
+                        }
+                    } else {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            ToolbarTextButton(text = "导入备份", onClick = pickBackup)
+                            if (studio != null) ToolbarTextButton(text = "服务器书架", onClick = model::listStudioBooks)
+                        }
                     }
                 }
             }
-            val listModifier = Modifier.fillMaxSize().padding(padding)
-            val gutters = PaddingValues(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 96.dp)
-            if (cards) LazyVerticalGrid(
-                columns = GridCells.Adaptive(142.dp), modifier = listModifier, contentPadding = gutters,
-                verticalArrangement = Arrangement.spacedBy(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                item(span = { GridItemSpan(maxLineSpan) }) { tools() }
-                items(entries.drop(1), key = ShelfEntry::id) { book -> BookTile(book, true, open) }
-            } else {
-                LazyColumn(listModifier, contentPadding = gutters, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    item { tools() }
-                    items(entries.drop(1), key = ShelfEntry::id) { book -> BookTile(book, false, open) }
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+                val listModifier = Modifier.widthIn(max = 980.dp).fillMaxSize()
+                val gutters = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 96.dp)
+                if (cards) LazyVerticalGrid(
+                    columns = GridCells.Adaptive(142.dp), modifier = listModifier, contentPadding = gutters,
+                    verticalArrangement = Arrangement.spacedBy(20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) { tools() }
+                    items(remaining, key = ShelfEntry::id) { book -> BookTile(book, true, open) }
+                } else {
+                    LazyColumn(listModifier, contentPadding = gutters, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item { tools() }
+                        items(remaining, key = ShelfEntry::id) { book -> BookTile(book, false, open) }
+                    }
                 }
             }
         }
@@ -175,16 +216,19 @@ private fun RecentBook(book: ShelfEntry, open: (String) -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(), onClick = { open(book.id) },
         insideMargin = PaddingValues(0.dp), cornerRadius = 24.dp,
-        colors = CardDefaults.defaultColors(color = colors.primaryContainer, contentColor = colors.onPrimaryContainer)
+        colors = CardDefaults.defaultColors(color = colors.surface, contentColor = colors.onSurface)
     ) {
         Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            Cover(book, Modifier.width(72.dp).aspectRatio(0.72f))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("继续写作", style = WriterTheme.typography.labelMedium)
-                Text(book.title, style = WriterTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${book.chapterCount} 章", style = WriterTheme.typography.bodySmall)
+            Cover(book, Modifier.width(76.dp).aspectRatio(0.69f))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("继续写作", style = WriterTheme.typography.labelMedium, color = colors.primary)
+                Text(book.title, style = WriterTheme.typography.chapterTitle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(book.activeChapterTitle.orEmpty().ifBlank { "${book.chapterCount} 章" },
+                    style = WriterTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, tint = colors.primary, modifier = Modifier.size(18.dp))
         }
     }
 }
@@ -193,16 +237,18 @@ private fun RecentBook(book: ShelfEntry, open: (String) -> Unit) {
 private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
     Card(onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
         insideMargin = PaddingValues(0.dp),
-        colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
+        cornerRadius = if (grid) 16.dp else 18.dp,
+        colors = CardDefaults.defaultColors(color = if (grid) Color.Transparent else WriterTheme.colorScheme.surface)) {
         val details: @Composable () -> Unit = {
             Text(book.title, style = WriterTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${book.chapterCount} 章", style = WriterTheme.typography.bodyMedium,
+            Text("${book.chapterCount} 章", style = WriterTheme.typography.bodySmall,
                 color = WriterTheme.colorScheme.onSurfaceVariant)
         }
         if (grid) {
-            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Cover(book, Modifier.fillMaxWidth().aspectRatio(0.9f))
-                details()
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Cover(book, Modifier.fillMaxWidth().aspectRatio(0.76f))
+                Column(Modifier.padding(horizontal = 3.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)) { details() }
             }
         } else {
             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically,
@@ -219,14 +265,24 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
     val bytes by produceState<ByteArray?>(null, book.cover) {
         value = withContext(Dispatchers.Default) { coverImage(book.cover) }
     }
-    val modifier = shape.clip(RoundedCornerShape(9.dp))
+    val coverShape = RoundedCornerShape(topStart = 5.dp, bottomStart = 5.dp, topEnd = 12.dp, bottomEnd = 12.dp)
+    val modifier = shape.clip(coverShape)
     if (bytes != null) {
         AsyncImage(bytes, null, modifier, contentScale = ContentScale.Crop)
     } else {
-        val palette = WriterTheme.colorScheme
-        Box(modifier.background(Brush.linearGradient(listOf(palette.surfaceContainerHigh, palette.primaryContainer))),
-            contentAlignment = Alignment.Center) {
-            Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(30.dp))
+        val stock = if (COUITheme.isDark) darkBookCovers else lightBookCovers
+        val (highlight, shade) = stock[(book.id.hashCode() and Int.MAX_VALUE) % stock.size]
+        Box(modifier.background(Brush.linearGradient(listOf(highlight, shade)))
+            .border(1.dp, Color.Black.copy(alpha = .08f), coverShape), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.align(Alignment.CenterStart).fillMaxHeight().width(6.dp)
+                    .background(Color.Black.copy(alpha = .11f))
+            )
+            Box(
+                Modifier.align(Alignment.CenterStart).padding(start = 8.dp, top = 1.dp, bottom = 1.dp)
+                    .fillMaxHeight().width(1.dp).background(Color.White.copy(alpha = .27f))
+            )
+            Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(26.dp), alpha = .78f)
         }
     }
 }
