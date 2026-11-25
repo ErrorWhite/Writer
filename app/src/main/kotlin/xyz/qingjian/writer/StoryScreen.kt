@@ -50,6 +50,14 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
     }
     StoryNote("剧情概括", handoff.string("recap"))
     StoryNote("下一章铺垫", handoff.string("bridge"))
+    val research = remember(book.payload) { JSONObject(book.payload).optJSONObject("research") }
+    val events = research?.records("events").orEmpty()
+    val byChapter = events.filter { it.string("source") == "handoff" }
+        .groupBy { it.optJSONObject("anchor")?.string("chapterId") }
+    val chronology = entries.mapNotNull { byChapter[it.id]?.takeIf(List<JSONObject>::isNotEmpty) }.zipWithNext().map {
+        it.first.last().string("id") to it.second.first().string("id")
+    }
+    PlotGraph(events, research?.records("links").orEmpty(), chronology)
     handoff.records("directions").forEach { option ->
         StoryNote(option.string("title"), option.string("detail")) {
             TextButton(onClick = { direction = option }) { Text("按此方向新建章节") }

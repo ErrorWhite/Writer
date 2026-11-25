@@ -318,13 +318,14 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
         ) {
             Text("工作台", style = MaterialTheme.typography.headlineSmall)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                listOf("写作", "资料", "剧情", "附件", "配置").forEach { item ->
+                listOf("写作", "资料", "剧情", "关系图", "附件", "配置").forEach { item ->
                     FilterChip(deskPage == item, { deskPage = item }, label = { Text(item) })
                 }
             }
             when (deskPage) {
                 "资料" -> ResearchWorkspace(model, book)
                 "剧情" -> StoryScreen(model, book, openEditor)
+                "关系图" -> LibraryGraph(model, book, openEditor)
                 "附件" -> ResourcesScreen(model, book)
                 "配置" -> BookSettings(model, book)
                 else -> {
