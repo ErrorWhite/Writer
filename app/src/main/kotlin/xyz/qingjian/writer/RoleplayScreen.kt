@@ -1,20 +1,34 @@
 package xyz.qingjian.writer
 
+import io.github.suqi8.coui.kmp.basic.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
+import io.github.suqi8.coui.kmp.basic.EmptyState
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.TextField
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,6 +39,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mangi.eta.agent.roleplay.CharacterCardCodec
@@ -51,16 +68,19 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
         if (uri != null) model.importRoleplayCard(book.id, uri) { selected = it }
     }
 
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             val encoded = card?.string("png").orEmpty()
             val avatar = remember(encoded) {
                 if (encoded.isBlank()) null else runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
             }
-            if (avatar != null) AsyncImage(avatar, null, Modifier.size(46.dp).padding(end = 6.dp))
-            Text(session?.string("title")?.ifBlank { card?.string("name") ?: "文本扮演" } ?: "文本扮演",
-                Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
-            TextButton(onClick = { menu = true }) { Text("会话") }
+            if (avatar != null) AsyncImage(avatar, null, Modifier.size(42.dp).clip(WriterTheme.shapes.medium),
+                contentScale = ContentScale.Crop)
+            Text(session?.string("title")?.ifBlank { card?.string("name") ?: "会话" } ?: "角色与会话",
+                Modifier.weight(1f), style = WriterTheme.typography.titleLarge, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            ToolbarTextButton(text = "会话", onClick = { menu = true })
             DropdownMenu(menu, { menu = false }) {
                 sessions.asReversed().forEach { item ->
                     val character = cards.find { it.string("id") == item.string("cardId") }
@@ -81,11 +101,13 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
             }
         }
         if (session == null || card == null) {
-            Text("导入酒馆 JSON 或 PNG 角色卡，或新建角色开始对话。")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { create = true }) { Text("新建角色") }
-                OutlinedButton(onClick = { picker.launch(arrayOf("application/json", "image/png", "application/octet-stream")) }) {
-                    Text("导入角色卡")
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    EmptyState(title = "开始一段对话", subtitle = "支持酒馆 JSON 和 PNG 角色卡。",
+                        actionText = "新建角色", onActionClick = { create = true })
+                    TextButton(onClick = { picker.launch(arrayOf("application/json", "image/png", "application/octet-stream")) }) {
+                        Text("导入角色卡")
+                    }
                 }
             }
         } else {
@@ -199,38 +221,58 @@ private fun RoleplayConversation(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val shown = messages.takeLast(limit)
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (messages.size > limit) item {
                 TextButton(onClick = { limit += 30 }) { Text("查看更早的对话") }
             }
             items(shown, key = { it.string("id") }) { message ->
                 val user = message.string("role") == "user"
-                Surface(color = if (user) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
-                    shape = WriterTheme.shapes.large) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(if (user) session.string("userName", "玩家") else card.string("name"),
-                            style = WriterTheme.typography.labelLarge)
-                        Text(message.string("text"), style = WriterTheme.typography.bodyLarge)
-                        val alternatives = message.optJSONArray("replyAlternatives")?.length() ?: 0
-                        Row {
-                            if (alternatives > 1) {
-                                val index = message.optInt("selectedReply")
-                                for ((step, label) in listOf(-1 to "上一版", 1 to "下一版")) {
-                                    TextButton(enabled = !running && index + step in 0 until alternatives, onClick = {
-                                        model.perform {
-                                            mutateBook(bookId) {
-                                                findSession(it, id).records("messages").firstOrNull { entry ->
-                                                    entry.string("id") == message.string("id")
-                                                }?.let { entry -> selectRoleplayReply(entry, index + step) }
-                                            }
+                var actions by remember { mutableStateOf(false) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = if (user) Alignment.CenterEnd else Alignment.CenterStart) {
+                    Surface(
+                        modifier = Modifier.widthIn(max = 540.dp).fillMaxWidth(if (user) .84f else .96f),
+                        color = if (user) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
+                        shape = WriterTheme.shapes.large
+                    ) {
+                        Column(Modifier.padding(start = 16.dp, top = 6.dp, end = 12.dp, bottom = 16.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (user) session.string("userName", "玩家") else card.string("name"),
+                                    Modifier.weight(1f), style = WriterTheme.typography.labelMedium,
+                                    color = WriterTheme.colorScheme.onSurfaceVariant)
+                                Box {
+                                    IconButton(onClick = { actions = true }, enabled = !running) {
+                                        Icon(Icons.Default.MoreVert, "消息操作")
+                                    }
+                                    DropdownMenu(actions, { actions = false }) {
+                                        val count = message.optJSONArray("replyAlternatives")?.length() ?: 0
+                                        val index = message.optInt("selectedReply")
+                                        if (count > 1) for ((step, label) in listOf(-1 to "上一版", 1 to "下一版")) {
+                                            DropdownMenuItem(label, enabled = index + step in 0 until count, onClick = {
+                                                actions = false
+                                                model.perform {
+                                                    mutateBook(bookId) {
+                                                        findSession(it, id).records("messages").firstOrNull { entry ->
+                                                            entry.string("id") == message.string("id")
+                                                        }?.let { entry -> selectRoleplayReply(entry, index + step) }
+                                                    }
+                                                }
+                                            })
                                         }
-                                    }) { Text(label) }
+                                        DropdownMenuItem("从此分支", onClick = {
+                                            actions = false
+                                            branching = messages.indexOf(message)
+                                        })
+                                        if (bookId != standaloneRoleplayId && !user) {
+                                            DropdownMenuItem("采用为参考", onClick = {
+                                                actions = false
+                                                reference = message
+                                            })
+                                        }
+                                    }
                                 }
                             }
-                            TextButton(enabled = !running, onClick = { branching = messages.indexOf(message) }) { Text("从此分支") }
-                        }
-                        if (bookId != standaloneRoleplayId && !user) {
-                            TextButton(enabled = !running, onClick = { reference = message }) { Text("采用为参考") }
+                            Text(message.string("text"), style = WriterTheme.typography.bodyLarge)
                         }
                     }
                 }
@@ -260,13 +302,19 @@ private fun RoleplayConversation(
         }
         if (run?.error != null) Text(run.error, color = WriterTheme.colorScheme.error)
         CurrentPlanNotice(model)
-        if (running && partial == null) Text("角色正在回应…")
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            if (running) OutlinedButton(onClick = { model.stopGeneration(runId) }) { Text("停止") }
-            else {
-                OutlinedTextField(input, { input = it }, Modifier.weight(1f), label = { Text("你要说的话") })
-                if (input.isNotBlank()) OutlinedButton(onClick = { request(input.trim(), false) }) { Text("发送") }
+        Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                if (running) {
+                    if (partial == null) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                    Text("角色正在回应", Modifier.weight(1f), style = WriterTheme.typography.bodySmall)
+                    ToolbarTextButton(text = "停止", onClick = { model.stopGeneration(runId) })
+                } else {
+                    TextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
+                        label = "输入消息", maxLines = 4)
+                    Button(onClick = { request(input.trim(), false) }, enabled = input.isNotBlank(),
+                        minWidth = 52.dp, insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("发送") }
+                }
             }
         }
         if (!running && input.isBlank()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

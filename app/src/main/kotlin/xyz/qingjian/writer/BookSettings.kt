@@ -104,13 +104,17 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     if (writingOpen) {
         var size by rememberSaveable { mutableStateOf(payload.optInt("fontSize", 17).toString()) }
         var goal by rememberSaveable { mutableStateOf(payload.optInt("goal", 1500).toString()) }
-        var paper by rememberSaveable { mutableStateOf(payload.string("paper", "white")) }
+        var paper by rememberSaveable {
+            mutableStateOf(payload.string("paper", "white").let { if (it == "warm") "cream" else it })
+        }
+        var divider by rememberSaveable { mutableStateOf(payload.string("dividerStyle", "ornament")) }
         SettingsDialog("写作外观与目标", { writingOpen = false }, save = {
             model.perform {
                 mutateBook(book.id) { data ->
                     data.put("fontSize", size.toIntOrNull()?.coerceIn(13, 32) ?: 17)
                         .put("goal", goal.toIntOrNull()?.coerceIn(0, 100_000) ?: 1500)
                         .put("paper", paper)
+                        .put("dividerStyle", divider)
                 }
                 writingOpen = false
             }
@@ -118,8 +122,14 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
             OutlinedTextField(size, { size = it }, singleLine = true, label = { Text("正文字号（13–32）") })
             OutlinedTextField(goal, { goal = it }, singleLine = true, label = { Text("编辑器目标字数") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("white" to "白纸", "warm" to "暖纸").forEach { (key, label) ->
+                listOf("white" to "白纸", "cream" to "暖白", "blue" to "雾蓝").forEach { (key, label) ->
                     FilterChip(paper == key, { paper = key }, label = label)
+                }
+            }
+            Text("场景分隔线", style = WriterTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("ornament" to "菱形", "stars" to "三星", "line" to "细线").forEach { (key, label) ->
+                    FilterChip(divider == key, { divider = key }, label = label)
                 }
             }
         }

@@ -1,5 +1,6 @@
 package xyz.qingjian.writer
 
+import io.github.suqi8.coui.kmp.basic.Surface
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.FloatingToolbar
+import io.github.suqi8.coui.kmp.basic.LinearProgressIndicator
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
 import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +51,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -134,6 +139,7 @@ private fun ChapterBody(
     var closeChapter by rememberSaveable { mutableStateOf(false) }
     var paragraphActions by remember { mutableStateOf<Int?>(null) }
     val settings = remember(book.payload) { org.json.JSONObject(book.payload) }
+    val chapterSettings = remember(chapter.payload) { JSONObject(chapter.payload) }
     val inlineCandidates = remember(chapter.payload, text) {
         val review = JSONObject(chapter.payload).optJSONObject("nativeReview")
         when {
@@ -144,10 +150,13 @@ private fun ChapterBody(
         }
     }
     val bodySize = settings.optInt("fontSize", 17).coerceIn(13, 32).sp
-    val goal = settings.optInt("goal")
-    val paper = if (settings.string("paper") == "warm" && WriterTheme.colorScheme.surface.luminance() > 0.5f) {
-        Color(0xFFFFF7E8)
-    } else WriterTheme.colorScheme.surface
+    val goal = chapterSettings.optInt("goal").takeIf { it > 0 } ?: settings.optInt("goal")
+    val light = WriterTheme.colorScheme.surface.luminance() > 0.5f
+    val paper = when (settings.string("paper")) {
+        "warm", "cream" -> if (light) Color(0xFFFAF5E9) else Color(0xFF282525)
+        "blue" -> if (light) Color(0xFFEDF4FC) else Color(0xFF1E2A3A)
+        else -> WriterTheme.colorScheme.surface
+    }
     fun change(next: TextFieldValue, checkpoint: Boolean = false) {
         if (next.text != editor.text) {
             val now = android.os.SystemClock.elapsedRealtime()
@@ -215,13 +224,18 @@ private fun ChapterBody(
         applyToolbarEdit(TextFieldValue(editor.text.replaceRange(start, end, decorated), TextRange(caret)))
     }
 
-    Box(modifier, contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.widthIn(max = 800.dp).fillMaxSize().padding(horizontal = 16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(chapter.title, Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
-                TextButton(onClick = {
+    Surface(modifier, color = paper) {
+      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 760.dp).fillMaxSize()) {
+            val editing = sourceMode || active != null
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = if (keyboardVisible) 0.dp else 14.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Text(chapter.title, Modifier.weight(1f), maxLines = if (keyboardVisible) 1 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = if (keyboardVisible) WriterTheme.typography.titleLarge else WriterTheme.typography.chapterTitle)
+                ToolbarTextButton(text = if (editing) "完成" else "源码", onClick = {
                     if (sourceMode || active != null) finishEditing() else sourceMode = true
-                }) { Text(if (sourceMode || active != null) "完成" else "源码") }
+                })
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "章节操作") }
                     DropdownMenu(menu, { menu = false }) {
@@ -253,24 +267,27 @@ private fun ChapterBody(
                     }
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            if (!keyboardVisible || draft?.state == SaveState.Failed) {
                 val count by produceState(0, editor.text) {
                     value = withContext(Dispatchers.Default) { manuscriptWordCount(editor.text) }
                 }
-                Text("$count${if (goal > 0) " / $goal" else ""} 字${if (chapter.complete) " · 定稿" else ""}",
-                    color = WriterTheme.colorScheme.onSurfaceVariant, style = WriterTheme.typography.bodySmall)
-                if (draft?.state == SaveState.Failed) {
-                    TextButton(onClick = { model.retry(draftKey) }) { Text("保存失败，重试") }
-                } else {
-                    Text(if (draft?.state == SaveState.Saving) "正在保存…" else "已保存到本机",
+                Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("$count${if (goal > 0) " / $goal" else ""} 字${if (chapter.complete) " · 定稿" else ""}",
                         style = WriterTheme.typography.bodySmall, color = WriterTheme.colorScheme.onSurfaceVariant)
+                    when (draft?.state) {
+                        SaveState.Failed -> ToolbarTextButton(text = "重试保存", onClick = { model.retry(draftKey) })
+                        SaveState.Saving -> Text("保存中", style = WriterTheme.typography.bodySmall,
+                            color = WriterTheme.colorScheme.onSurfaceVariant)
+                        else -> Unit
+                    }
+                  }
+                  if (goal > 0 && !focus) LinearProgressIndicator(Modifier.fillMaxWidth(),
+                      progress = (count.toFloat() / goal).coerceIn(0f, 1f), height = 2.dp)
                 }
             }
-            val editing = sourceMode || active != null
             val bodyStyle = WriterTheme.typography.bodyLarge.copy(
                 color = WriterTheme.colorScheme.onSurface, fontSize = bodySize,
                 lineHeight = bodySize * 1.75f, fontFamily = FontFamily.Serif
@@ -291,7 +308,7 @@ private fun ChapterBody(
                     else -> LazyColumn(
                         Modifier.fillMaxSize(), state = viewport,
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
                         itemsIndexed(blocks, key = { index, _ -> index }) { index, block ->
                             val binding = active
@@ -322,7 +339,7 @@ private fun ChapterBody(
                                         val node = block.node
                                         if (node == null) Text("点这里开始写作",
                                             color = WriterTheme.colorScheme.onSurfaceVariant, style = bodyStyle)
-                                        else ManuscriptBlock(node, bodyStyle)
+                                        else ManuscriptBlock(node, bodyStyle, settings.string("dividerStyle", "ornament"))
                                     }
                                     inlineCandidates.firstOrNull { it.optInt("start", -1) in block.start until block.end }
                                         ?.let { candidate ->
@@ -346,8 +363,10 @@ private fun ChapterBody(
             }
             if (editing && !paragraphMode) {
                 if (formatting) FormatBar(editor, ::applyToolbarEdit)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                FloatingToolbar(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = WriterTheme.colorScheme.surfaceContainer, materialEffect = false,
+                    outSidePadding = PaddingValues(horizontal = 4.dp)) {
+                  Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     TextButton(enabled = undoSize > 0, onClick = {
                         redo.addLast(editor.copy(composition = null))
                         replaceFromHistory(undo.removeLast())
@@ -375,9 +394,11 @@ private fun ChapterBody(
                         }
                     }) { Text("段落") }
                     TextButton(onClick = { formatting = !formatting }) { Text("格式") }
+                  }
                 }
             }
         }
+      }
     }
     if (details) ChapterDetails(model, chapter) { details = false }
     if (history) HistoryDialog(model, chapter) { history = false }
@@ -458,12 +479,17 @@ private fun InlineParagraphActions(
 private fun ChapterDetails(model: WriterModel, chapter: ChapterRow, dismiss: () -> Unit) {
     var title by rememberSaveable { mutableStateOf(chapter.title) }
     var complete by rememberSaveable { mutableStateOf(chapter.complete) }
+    var goal by rememberSaveable {
+        mutableStateOf(JSONObject(chapter.payload).optInt("goal").takeIf { it > 0 }?.toString().orEmpty())
+    }
     AlertDialog(
         onDismissRequest = dismiss,
         title = { Text("章节信息") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(title, { title = it }, singleLine = true, label = { Text("章名") })
+                OutlinedTextField(goal, { goal = it.filter(Char::isDigit).take(7) },
+                    singleLine = true, label = { Text("本章目标字数") })
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(complete, { complete = it })
                     Text("标记为定稿")
@@ -475,7 +501,11 @@ private fun ChapterDetails(model: WriterModel, chapter: ChapterRow, dismiss: () 
         },
         confirmButton = {
             TextButton(enabled = title.isNotBlank(), onClick = {
-                model.perform { updateChapter(chapter.bookId, chapter.id, title.trim(), complete); dismiss() }
+                model.perform {
+                    updateChapter(chapter.bookId, chapter.id, title.trim(), complete,
+                        goal.toIntOrNull()?.takeIf { it > 0 }?.coerceAtMost(1_000_000))
+                    dismiss()
+                }
             }) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = dismiss) { Text("取消") } }

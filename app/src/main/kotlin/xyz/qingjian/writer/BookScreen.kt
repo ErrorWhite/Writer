@@ -1,5 +1,6 @@
 package xyz.qingjian.writer
 
+import io.github.suqi8.coui.kmp.basic.Surface
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,7 +19,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -30,10 +30,14 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
 import io.github.suqi8.coui.kmp.basic.Button
+import io.github.suqi8.coui.kmp.basic.ChipTabRow
+import io.github.suqi8.coui.kmp.basic.EmptyState
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.preference.PreferenceCategory
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -154,22 +158,24 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
         if (term.isEmpty()) flowOf(emptyList()) else model.library.searchChapters(book.id, term)
     }.collectAsStateWithLifecycle(initialValue = emptyList())
     val found = remember(matches) { matches.toSet() }
-    LazyColumn(modifier, contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    LazyColumn(modifier, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("目录", Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
-                OutlinedButton(onClick = { creatingVolume = true }) { Text("新建卷") }
-            }
+            WriterSearch(query, { query = it }, "搜索目录与正文")
         }
-        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
-            label = { Text("搜索目录与正文") }) }
-        if (term.isNotEmpty() && found.isEmpty()) item { Text("没有匹配的章节") }
+        if (term.isNotEmpty() && found.isEmpty()) item { EmptyState(title = "没有匹配的章节") }
+        if (term.isEmpty()) item {
+            PreferenceCategory("${volumes.size} 卷 · ${chapters.size} 章", endWidget = {
+                ToolbarTextButton(text = "新建卷", onClick = { creatingVolume = true })
+            })
+        }
         volumes.forEach { volume ->
             val visible = byVolume[volume.id].orEmpty().filter { term.isEmpty() || it.id in found }
             if (term.isNotEmpty() && visible.isEmpty()) return@forEach
             item(key = "volume:${volume.id}") {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(volume.title, Modifier.weight(1f), style = WriterTheme.typography.titleLarge)
+                    Text(volume.title, Modifier.weight(1f).padding(start = 6.dp), style = WriterTheme.typography.titleLarge,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
                     TextButton(onClick = { newChapterVolume = volume.id }) { Text("新建章") }
                     Box {
                         IconButton(onClick = { volumeActions = volume.id }) { Icon(Icons.Default.MoreVert, "分卷操作") }
@@ -376,14 +382,12 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
     val bookFileName = remember(book.title) { safeFileName(book.title) }
     Box(modifier, contentAlignment = Alignment.TopCenter) {
         Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                listOf("写作", "资料", "剧情", "关系图", "附件", "配置").forEach { item ->
-                    FilterChip(deskPage == item, { deskPage = item }, label = item)
-                }
-            }
+            val tabs = listOf("写作", "资料", "剧情", "关系图", "附件", "配置")
+            ChipTabRow(tabs, tabs.indexOf(deskPage).coerceAtLeast(0), { deskPage = tabs[it] },
+                modifier = Modifier.fillMaxWidth(), horizontalPadding = 0.dp, itemSpacing = 6.dp)
             when (deskPage) {
                 "资料" -> ResearchWorkspace(model, book)
                 "剧情" -> StoryScreen(model, book, openEditor)
@@ -404,9 +408,17 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
             Button(enabled = value != existing, onClick = { model.perform { updateBookText(book.id, field, value) } }) {
                 Text("保存$label")
             }
-            Text("导出", style = WriterTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
-            ExportFormat.entries.filter { it != ExportFormat.Chapter }.forEach { format ->
-                ExportButton(format, bookFileName, onDestination = { uri -> model.writeExport(uri, book.id, format, null) })
+            PreferenceGroup("导出") {
+                ExportFormat.entries.filter { it != ExportFormat.Chapter }.forEach { format ->
+                    item(format.name) {
+                        val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(format.mime)) {
+                            it?.let { uri -> model.writeExport(uri, book.id, format, null) }
+                        }
+                        io.github.suqi8.coui.kmp.preference.ArrowPreference(format.label, onClick = {
+                            launcher.launch("$bookFileName.${format.extension}")
+                        })
+                    }
+                }
             }
                 }
             }

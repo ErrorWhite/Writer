@@ -57,12 +57,20 @@ internal fun ManuscriptBlock(
     node: Node,
     body: androidx.compose.ui.text.TextStyle = WriterTheme.typography.bodyLarge.copy(
         fontFamily = FontFamily.Serif, lineHeight = 29.sp
-    )
+    ),
+    divider: String = "ornament"
 ) {
     val palette = WriterTheme.colorScheme
     fun render(input: Node) = buildAnnotatedString { inlineMarkdown(input, palette.primary) }
     when (node) {
-        is ThematicBreak -> HorizontalDivider(Modifier.fillMaxWidth(.28f))
+        is ThematicBreak -> Row(Modifier.fillMaxWidth().padding(vertical = 5.dp),
+            horizontalArrangement = Arrangement.Center, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            if (divider == "line") HorizontalDivider(Modifier.fillMaxWidth(.38f), color = palette.outlineVariant)
+            else {
+                Text(if (divider == "stars") "＊ ＊ ＊" else "✦", color = palette.onSurfaceVariant,
+                    fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp))
+            }
+        }
         is Heading -> Text(render(node), style = when (node.level) {
             1 -> WriterTheme.typography.headlineSmall
             2 -> WriterTheme.typography.titleLarge

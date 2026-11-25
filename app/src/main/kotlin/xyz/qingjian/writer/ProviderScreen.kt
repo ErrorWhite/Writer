@@ -17,18 +17,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mangi.eta.data.provider.CommunityCatalog
 import io.github.mangi.eta.data.provider.CommunityCatalogProvider
 import io.github.suqi8.coui.kmp.basic.RadioButton
-import io.github.suqi8.coui.kmp.basic.Switch
 import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.CardListGroup
+import io.github.suqi8.coui.kmp.basic.EmptyState
 import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.SegmentButton
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
 import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
+import io.github.suqi8.coui.kmp.preference.SwitchPreference
 
 @Composable
 internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
@@ -48,37 +50,44 @@ internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
     Scaffold(containerColor = WriterTheme.colorScheme.background, topBar = { BackBar("模型供应商", back) }) { padding ->
       Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()
           .verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (!accounts.isNullOrEmpty()) Card {
-            CardListGroup {
-                accounts.orEmpty().forEach { account -> item(account.id) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected == account.id, { model.useAccount(account.id) }, enabled = account.enabled)
-                    Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                        Text(account.name, style = WriterTheme.typography.titleMedium)
-                        Text("${account.protocol.label} · ${account.model}", style = WriterTheme.typography.bodySmall)
+        if (!accounts.isNullOrEmpty()) {
+            PreferenceGroup("模型账号") {
+                accounts.orEmpty().forEach { account ->
+                    item(account.id) {
+                        ArrowPreference(title = account.name, summary = "${account.protocol.label} · ${account.model}",
+                            onClick = { edit = account },
+                            startAction = {
+                                RadioButton(selected == account.id, { model.useAccount(account.id) }, enabled = account.enabled)
+                            },
+                            endActions = { ToolbarTextButton(text = "编辑", onClick = { edit = account }) }
+                        )
                     }
-                    TextButton(onClick = { edit = account }) { Text("编辑") }
                 }
-                } }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = {
-                val preset = providerPresets.first()
-                edit = ProviderAccount(newId(), preset.name, preset.url, preset.protocol, "", "")
-            }) { Text("添加账号") }
-            OutlinedButton(onClick = { showUsage = true }) { Text("使用统计") }
-        }
-        TextButton(enabled = !loadingCatalog, onClick = {
-            loadingCatalog = true
-            model.loadModelCatalog { result ->
-                loadingCatalog = false
-                result.onSuccess { catalog = it }.onFailure { model.notice(it.localizedMessage ?: "读取目录失败。") }
+        PreferenceGroup(if (accounts.isNullOrEmpty()) "连接模型" else "管理") {
+            item("add") {
+                ArrowPreference("添加供应商", summary = "API Key 或兼容端点", onClick = {
+                    val preset = providerPresets.first()
+                    edit = ProviderAccount(newId(), preset.name, preset.url, preset.protocol, "", "")
+                })
             }
-        }) { Text(if (loadingCatalog) "读取模型目录…" else "浏览社区模型目录") }
+            item("catalog") {
+                ArrowPreference(if (loadingCatalog) "正在加载模型目录" else "社区模型目录", enabled = !loadingCatalog, onClick = {
+                    loadingCatalog = true
+                    model.loadModelCatalog { result ->
+                        loadingCatalog = false
+                        result.onSuccess { catalog = it }.onFailure { model.notice(it.localizedMessage ?: "读取目录失败。") }
+                    }
+                })
+            }
+            item("usage") { ArrowPreference("使用统计", onClick = { showUsage = true }) }
+        }
         ChatGptPlanSettings(model, selected)
         CodexSettings(model, selected)
-        CheckOption("启用 AI 配图", images, model::enableImages)
+        PreferenceGroup("图像") {
+            item("images") { SwitchPreference(images, model::enableImages, title = "启用 AI 配图") }
+        }
       }
     }
     catalog?.let { source ->
@@ -91,7 +100,7 @@ internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
         onDismissRequest = { showUsage = false }, title = { Text("使用统计") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (usage.isEmpty()) Text("尚无模型用量记录")
+                if (usage.isEmpty()) EmptyState(title = "尚无模型用量记录")
                 usage.groupBy { it.day }.entries.toList().takeLast(30).asReversed().forEach { (day, rows) ->
                     Text("$day · ${rows.size} 次", style = WriterTheme.typography.titleMedium)
                     rows.groupBy { it.account to it.intent }.forEach { (key, entries) ->
@@ -116,7 +125,7 @@ private fun CatalogDialog(
         onDismissRequest = dismiss, title = { Text(provider?.name ?: "社区模型目录") },
         text = {
             Column {
-                OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索") })
+                WriterSearch(query, { query = it }, "搜索目录")
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     val source = provider
                     if (source == null) {
@@ -179,9 +188,8 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
         Column(Modifier.padding(insets).consumeWindowInsets(insets).imePadding()
             .verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("连接", "模型").forEach { item -> FilterChip(tab == item, { tab = item }, item) }
-            }
+            val tabs = listOf("连接", "模型")
+            SegmentButton(tabs, tabs.indexOf(tab), { tab = tabs[it] }, modifier = Modifier.fillMaxWidth())
             if (tab == "连接") Card {
               Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!exists) {
@@ -214,10 +222,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 OutlinedTextField(value.key, { value = value.copy(key = it) }, Modifier.fillMaxWidth(),
                     singleLine = true, password = true,
                     label = { Text(if (value.protocol == ModelProtocol.Vertex) "Google OAuth 访问令牌" else "API Key") })
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("启用账号", Modifier.weight(1f))
-                    Switch(checked = value.enabled, onCheckedChange = { value = value.copy(enabled = it) })
-                }
+                SwitchPreference(value.enabled, { value = value.copy(enabled = it) }, title = "启用账号")
                 TextButton(enabled = !connecting && value.key.isNotBlank(), onClick = {
                     connecting = true
                     status = "连接中…"
@@ -270,7 +275,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
     if (models) OverlayBottomSheet(show = true, onDismissRequest = { models = false }, title = "选择模型") {
             var query by remember { mutableStateOf("") }
             Column(Modifier.padding(20.dp)) {
-                OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索模型") })
+                WriterSearch(query, { query = it }, "搜索模型")
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     choices.asSequence().filter { it.contains(query, ignoreCase = true) }.take(60).forEach { choice ->
                         TextButton(onClick = { value = value.copy(model = choice); models = false }) { Text(choice) }

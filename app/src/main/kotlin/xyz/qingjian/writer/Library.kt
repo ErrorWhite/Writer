@@ -406,10 +406,13 @@ internal class Library(context: Context) {
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 
-    suspend fun updateChapter(bookId: String, chapterId: String, title: String, complete: Boolean) =
+    suspend fun updateChapter(bookId: String, chapterId: String, title: String, complete: Boolean, goal: Int?) =
         write {
             val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
-            dao.putChapter(chapter.copy(title = title, complete = complete))
+            val payload = JSONObject(chapter.payload).apply {
+                if (goal == null) remove("goal") else put("goal", goal)
+            }
+            dao.putChapter(chapter.copy(title = title, complete = complete, payload = payload.toString()))
             dao.touchBook(bookId, System.currentTimeMillis())
         }
 

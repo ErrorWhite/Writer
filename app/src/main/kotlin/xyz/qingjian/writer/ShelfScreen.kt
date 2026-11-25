@@ -9,10 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -26,13 +29,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
-import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.FloatingActionButton
+import io.github.suqi8.coui.kmp.basic.EmptyState
 import io.github.suqi8.coui.kmp.basic.Icon
 import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.TopAppBar
 import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
-import io.github.suqi8.coui.kmp.basic.CardListGroup
+import io.github.suqi8.coui.kmp.basic.SegmentButton
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
 import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
 import io.github.suqi8.coui.kmp.basic.Card
@@ -48,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -75,7 +80,7 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
         containerColor = WriterTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = "青简书架",
+                title = "书架",
                 color = WriterTheme.colorScheme.background,
                 largeTitleColor = WriterTheme.colorScheme.onBackground,
                 showDivider = false,
@@ -94,45 +99,47 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
     ) { padding ->
         val entries = books
         if (entries != null && entries.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentAlignment = Alignment.TopCenter) {
-                Card(colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(48.dp))
-                        Text("书架上还没有作品", style = WriterTheme.typography.headlineSmall)
-                        Text("可以新建作品，或导入青简全书备份。")
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { creating = true }) { Text("新建作品") }
-                            OutlinedButton(onClick = pickBackup) { Text("导入备份") }
-                        }
-                        if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("从服务器导入") }
+            Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp), contentAlignment = Alignment.Center) {
+                Column(Modifier.widthIn(max = 440.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    EmptyState(
+                        title = "开始写作",
+                        subtitle = "新建作品，或导入青简全书备份。",
+                        actionText = "新建作品",
+                        onActionClick = { creating = true },
+                        titleStyle = WriterTheme.typography.headlineSmall,
+                        illustration = { Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(64.dp)) }
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = pickBackup) { Text("导入备份") }
+                        if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
                     }
                 }
             }
         } else if (entries != null) {
             val tools: @Composable () -> Unit = {
-                Column {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = pickBackup) { Text("导入备份") }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    RecentBook(entries.first(), open)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        SegmentButton(listOf("封面", "列表"), if (cards) 0 else 1, { model.setShelfCards(it == 0) },
+                            modifier = Modifier.weight(1f))
+                        TextButton(onClick = pickBackup) { Text("导入") }
                         if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(cards, { model.setShelfCards(true) }, label = "卡片")
-                        FilterChip(!cards, { model.setShelfCards(false) }, label = "横排")
                     }
                 }
             }
             val listModifier = Modifier.fillMaxSize().padding(padding)
-            val gutters = PaddingValues(start = 20.dp, end = 20.dp, bottom = 96.dp)
+            val gutters = PaddingValues(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 96.dp)
             if (cards) LazyVerticalGrid(
                 columns = GridCells.Adaptive(142.dp), modifier = listModifier, contentPadding = gutters,
-                verticalArrangement = Arrangement.spacedBy(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) { tools() }
-                items(entries, key = ShelfEntry::id) { book -> BookTile(book, true, open) }
+                items(entries.drop(1), key = ShelfEntry::id) { book -> BookTile(book, true, open) }
             } else {
                 LazyColumn(listModifier, contentPadding = gutters, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item { tools() }
-                    items(entries, key = ShelfEntry::id) { book -> BookTile(book, false, open) }
+                    items(entries.drop(1), key = ShelfEntry::id) { book -> BookTile(book, false, open) }
                 }
             }
         }
@@ -163,8 +170,29 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
 }
 
 @Composable
+private fun RecentBook(book: ShelfEntry, open: (String) -> Unit) {
+    val colors = WriterTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(), onClick = { open(book.id) },
+        insideMargin = PaddingValues(0.dp), cornerRadius = 24.dp,
+        colors = CardDefaults.defaultColors(color = colors.primaryContainer, contentColor = colors.onPrimaryContainer)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Cover(book, Modifier.width(72.dp).aspectRatio(0.72f))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("继续写作", style = WriterTheme.typography.labelMedium)
+                Text(book.title, style = WriterTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("${book.chapterCount} 章", style = WriterTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
 private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
     Card(onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
+        insideMargin = PaddingValues(0.dp),
         colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
         val details: @Composable () -> Unit = {
             Text(book.title, style = WriterTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -173,7 +201,7 @@ private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
         }
         if (grid) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Cover(book, Modifier.fillMaxWidth().size(height = 144.dp, width = 132.dp))
+                Cover(book, Modifier.fillMaxWidth().aspectRatio(0.9f))
                 details()
             }
         } else {
@@ -195,7 +223,9 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
     if (bytes != null) {
         AsyncImage(bytes, null, modifier, contentScale = ContentScale.Crop)
     } else {
-        Box(modifier.background(WriterTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+        val palette = WriterTheme.colorScheme
+        Box(modifier.background(Brush.linearGradient(listOf(palette.surfaceContainerHigh, palette.primaryContainer))),
+            contentAlignment = Alignment.Center) {
             Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(30.dp))
         }
     }
@@ -206,19 +236,20 @@ internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Uni
     Scaffold(containerColor = WriterTheme.colorScheme.background, topBar = { BackBar("设置", back) }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("外观", style = WriterTheme.typography.titleLarge)
-            Card(colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
-                CardListGroup {
-                    ThemeMode.entries.forEach { option ->
-                        item(option.name) {
-                            RadioButtonPreference(option.label, mode == option, { model.setTheme(option) },
-                                radioButtonLocation = RadioButtonLocation.End)
-                        }
-                    }
+            PreferenceGroup("写作与模型") {
+                item("providers") {
+                    ArrowPreference("模型供应商", onClick = providers, startAction = {
+                        Icon(Icons.Default.Settings, null, tint = WriterTheme.colorScheme.primary)
+                    })
                 }
             }
-            Card {
-                TextButton(modifier = Modifier.fillMaxWidth(), onClick = providers) { Text("模型供应商") }
+            PreferenceGroup("外观") {
+                ThemeMode.entries.forEach { option ->
+                    item(option.name) {
+                        RadioButtonPreference(option.label, mode == option, { model.setTheme(option) },
+                            radioButtonLocation = RadioButtonLocation.End)
+                    }
+                }
             }
         }
     }

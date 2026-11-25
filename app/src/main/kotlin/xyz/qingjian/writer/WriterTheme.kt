@@ -27,8 +27,8 @@ internal class ManuscriptColors(dark: Boolean) {
     val onPrimary = if (dark) Color(0xFF122A75) else Color.White
     val primaryContainer = if (dark) Color(0xFF273B77) else Color(0xFFE4EAFF)
     val onPrimaryContainer = if (dark) Color(0xFFE1E8FF) else Color(0xFF172F79)
-    val background = if (dark) Color(0xFF141923) else Color(0xFFF1F3F8)
-    val surface = if (dark) Color(0xFF1B2230) else Color(0xFFFCFCFF)
+    val background = if (dark) Color(0xFF151921) else Color(0xFFF0F1F4)
+    val surface = if (dark) Color(0xFF1D222C) else Color(0xFFFEFEFF)
     val surfaceContainer = if (dark) Color(0xFF222B3D) else Color(0xFFE9EDF7)
     val surfaceContainerHigh = if (dark) Color(0xFF293246) else Color(0xFFE3E8F5)
     val onSurface = if (dark) Color(0xFFE9EDF9) else Color(0xFF242D42)
@@ -40,6 +40,7 @@ internal class ManuscriptColors(dark: Boolean) {
 }
 
 internal object ManuscriptTypography {
+    val chapterTitle = TextStyle(fontSize = 29.sp, lineHeight = 39.sp, fontFamily = serif, fontWeight = FontWeight.SemiBold)
     val headlineSmall = TextStyle(fontSize = 24.sp, lineHeight = 32.sp, fontFamily = serif, fontWeight = FontWeight.SemiBold)
     val titleLarge = headlineSmall.copy(fontSize = 20.sp, lineHeight = 26.sp)
     val titleMedium = TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)

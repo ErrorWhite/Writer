@@ -26,6 +26,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListGroup
+import io.github.suqi8.coui.kmp.basic.EmptyState
 import io.github.suqi8.coui.kmp.basic.Text
 import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
@@ -74,12 +75,12 @@ internal fun ModelPicker(model: WriterModel, modifier: Modifier = Modifier) {
             ).padding(horizontal = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(),
-                singleLine = true, label = { Text("搜索模型或供应商") })
+            WriterSearch(query, { query = it }, "搜索模型或供应商")
             LazyColumn(Modifier.heightIn(max = 320.dp), contentPadding = PaddingValues(bottom = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (choices.isEmpty()) item { Text("在设置中连接供应商或登录 ChatGPT 套餐。") }
-                else if (filtered.isEmpty()) item { Text("没有匹配的模型") }
+                if (choices.isEmpty()) item {
+                    EmptyState(title = "还没有可用模型", subtitle = "在设置中连接供应商或登录 ChatGPT 套餐。")
+                } else if (filtered.isEmpty()) item { EmptyState(title = "没有匹配的模型") }
                 items(filtered, key = { it.key }) { (group, options) ->
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(group, style = WriterTheme.typography.labelLarge)

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
@@ -24,6 +23,8 @@ import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.SnackbarHost
 import io.github.suqi8.coui.kmp.basic.SnackbarHostState
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
+import io.github.suqi8.coui.kmp.overlay.OverlayInputDialog
 import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -150,6 +151,7 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
 internal fun BackBar(title: String, back: () -> Unit, actions: @Composable () -> Unit = {}) {
     SmallTopAppBar(
         title = title,
+        showDivider = false,
         navigationIcon = {
             IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
         },
@@ -163,16 +165,12 @@ internal fun NameDialog(
     dismiss: () -> Unit, save: (String) -> Unit
 ) {
     var value by rememberSaveable { mutableStateOf(initial) }
-    AlertDialog(
+    OverlayInputDialog(
+        show = true, value = value, onValueChange = { value = it },
+        title = title, label = label,
         onDismissRequest = dismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(value, { value = it }, Modifier.fillMaxWidth(), singleLine = true,
-                label = { Text(label) })
-        },
-        confirmButton = {
-            TextButton(enabled = value.isNotBlank(), onClick = { save(value.trim()); dismiss() }) { Text("确定") }
-        },
-        dismissButton = { TextButton(onClick = dismiss) { Text("取消") } }
+        negative = DialogButtonBarAction(text = "取消", onClick = dismiss),
+        positive = DialogButtonBarAction(text = "确定", enabled = value.isNotBlank(), recommended = true,
+            onClick = { save(value.trim()); dismiss() })
     )
 }
