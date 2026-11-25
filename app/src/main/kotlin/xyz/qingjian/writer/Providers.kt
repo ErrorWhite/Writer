@@ -58,7 +58,8 @@ internal val providerPresets = listOf(
 
 internal data class ProviderAccount(
     val id: String, val name: String, val endpoint: String, val protocol: ModelProtocol,
-    val model: String, val key: String, val enabled: Boolean = true, val customHeaders: String = ""
+    val model: String, val key: String, val enabled: Boolean = true, val customHeaders: String = "",
+    val reasoning: ReasoningEffort = ReasoningEffort.Default
 ) {
     fun url(path: String) = endpoint.trim().trimEnd('/').toHttpUrl().let { base ->
         require(base.isHttps && base.username.isEmpty() && base.password.isEmpty() &&
@@ -107,7 +108,8 @@ internal class ProviderVault(context: Context) {
             ProviderAccount(id, row.getString("name"), row.getString("endpoint"),
                 ModelProtocol.valueOf(row.getString("protocol")), row.getString("model"),
                 open(row.getString("key"), id), row.optBoolean("enabled", true),
-                row.optString("headers").takeIf(String::isNotEmpty)?.let { open(it, "$id/headers") }.orEmpty())
+                row.optString("headers").takeIf(String::isNotEmpty)?.let { open(it, "$id/headers") }.orEmpty(),
+                ReasoningEffort.entries.firstOrNull { it.wire == row.optString("reasoning") } ?: ReasoningEffort.Default)
         }
     }
 
@@ -118,6 +120,7 @@ internal class ProviderVault(context: Context) {
                 .put("model", account.model).put("enabled", account.enabled)
                 .put("key", seal(account.key, account.id))
                 .put("headers", seal(account.customHeaders, "${account.id}/headers"))
+                .put("reasoning", account.reasoning.wire)
         }
         check(storage.edit().putString("accounts", JSONArray(rows).toString()).commit()) { "账号保存失败。" }
     }
@@ -219,6 +222,7 @@ internal class ModelClient {
             ModelProtocol.Anthropic -> body.put("system", system).put("messages", input).put("max_tokens", 4096)
             else -> error("协议选择无效。")
         }
+        applyReasoning(body, account)
         val outgoing = request(account, account.protocol.route)
             .header("Accept", "text/event-stream")
             .post(body.toString().toRequestBody(json)).build()
@@ -281,6 +285,7 @@ internal class ModelClient {
         onReasoning: (String) -> Unit, onUsage: (ModelUsage) -> Unit
     ): String {
         val body = googleRequest(account.protocol, account.model, system, messages)
+        applyReasoning(body, account)
         val outgoing = if (account.protocol == ModelProtocol.Vertex) {
             val base = account.url("models")
             require("/publishers/google/models" in base.encodedPath && "/projects/" in base.encodedPath) {

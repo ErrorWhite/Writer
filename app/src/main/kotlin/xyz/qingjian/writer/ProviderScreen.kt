@@ -1,5 +1,6 @@
 package xyz.qingjian.writer
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -157,6 +158,11 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
             status = error.localizedMessage.orEmpty()
             return
         }
+        if (value.reasoning !in supportedEfforts(value)) {
+            tab = "模型"
+            status = "这个模型不支持所选思考档位。"
+            return
+        }
         model.saveAccount(value.copy(name = value.name.trim(), model = value.model.trim(), key = value.key.trim()))
         dismiss()
     }
@@ -235,6 +241,16 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(),
                         singleLine = true, label = { Text("模型 ID") })
+                    val efforts = supportedEfforts(value)
+                    if (efforts.size > 1 || value.reasoning != ReasoningEffort.Default) {
+                        Text("思考档位", style = WriterTheme.typography.labelLarge)
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            efforts.forEach { effort ->
+                                FilterChip(value.reasoning == effort, { value = value.copy(reasoning = effort) }, effort.label)
+                            }
+                        }
+                    }
                     TextButton(enabled = !connecting && value.key.isNotBlank(), onClick = {
                         connecting = true
                         model.listModels(value) { result ->

@@ -8,6 +8,23 @@ import org.junit.Test
 
 class WritingWorkspaceTest {
     @Test
+    fun reasoningSettingsUseTheSelectedProvidersOwnWireFormat() {
+        val deepseek = ProviderAccount("id", "DeepSeek", "https://api.deepseek.com/v1", ModelProtocol.Chat,
+            "deepseek-reasoner", "synthetic", reasoning = ReasoningEffort.Medium)
+        val deepseekBody = JSONObject()
+        applyReasoning(deepseekBody, deepseek)
+        assertEquals("high", deepseekBody.getString("reasoning_effort"))
+        assertEquals("enabled", deepseekBody.getJSONObject("thinking").getString("type"))
+        val geminiBody = JSONObject()
+        applyReasoning(geminiBody, deepseek.copy(
+            protocol = ModelProtocol.Gemini, endpoint = "https://generativelanguage.googleapis.com/v1beta",
+            model = "gemini-3"
+        ))
+        assertEquals("medium", geminiBody.getJSONObject("generation_config").getString("thinking_level"))
+        assertFalse(geminiBody.has("reasoning_effort"))
+    }
+
+    @Test
     fun blocksRetainSourceOffsetsAcrossWindowsLineEndingsAndSceneDividers() {
         val source = "# 标题\r\n\r\n第一段。\r\n✦\r\n第二段。\r\n"
         assertEquals(listOf("# 标题", "第一段。", "✦", "第二段。"),
