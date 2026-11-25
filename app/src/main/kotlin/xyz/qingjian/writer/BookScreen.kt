@@ -77,7 +77,7 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
         when {
             focus -> focus = false
             page != BookPage.Edit -> page = BookPage.Edit
-            else -> model.perform { back() }
+            else -> back()
         }
     }
     BackHandler(enabled = !keyboardOpen, onBack = leave)
@@ -184,7 +184,7 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
                 key = { "chapter:${it.id}" }) { chapter ->
                 val selected = chapter.id == book.activeId
                 Surface(
-                    onClick = { model.perform {
+                    onClick = { model.perform(requiresSaved = false) {
                         if (term.isNotEmpty()) {
                             val body = chapterText(book.id, chapter.id)
                             val start = body.indexOf(term, ignoreCase = true)

@@ -642,11 +642,11 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         }
     }
 
-    fun perform(action: suspend Library.() -> Unit) {
+    fun perform(requiresSaved: Boolean = true, action: suspend Library.() -> Unit) {
         viewModelScope.launch {
             lock.withLock {
                 flush()
-                if (mutableDrafts.value.values.any { it.state == SaveState.Failed }) {
+                if (requiresSaved && mutableDrafts.value.values.any { it.state == SaveState.Failed }) {
                     notice("请重试保存当前正文后再继续。")
                     return@withLock
                 }

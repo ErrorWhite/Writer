@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { createApiHandler } from './local-api.js'
 
 test('existing copies are upgraded with conditional writes and deletion remains idempotent', async (t) => {
@@ -59,4 +62,52 @@ test('existing copies are upgraded with conditional writes and deletion remains 
   assert.equal((await restarted(path)).status, 410)
   assert.equal((await restarted(path, 'PUT', change)).status, 410)
   assert.deepEqual((await restarted('/api/books?include=deleted')).body.deleted, [id])
+})
+
+test('production sync uses the same authenticated writing studio session', { timeout: 12000 }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'qingjian-prod-sync-'))
+  const origin = 'https://sync.example.test'
+  const username = 'sync-test'
+  const password = 'synthetic-check-password'
+  const hash = createHash('sha256').update('Basic ' + Buffer.from(username + ':' + password).toString('base64')).digest('hex')
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./production.js', import.meta.url))], {
+    env: { ...process.env, QINGJIAN_PORT: '0', QINGJIAN_HTTPS_ORIGIN: origin,
+      QINGJIAN_URL_PATH: '/', QINGJIAN_AUTHORIZATION_SHA256: hash, QINGJIAN_DATA_DIR: directory },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  })
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      await new Promise(resolve => { child.once('exit', resolve); child.kill() })
+    }
+    await rm(directory, { recursive: true, force: true })
+  })
+  const port = await new Promise((resolve, reject) => {
+    child.once('exit', code => reject(new Error('Production server exited with code ' + code)))
+    child.once('error', reject)
+    let output = ''
+    child.stdout.on('data', chunk => {
+      output += chunk
+      const match = /listening on 127\.0\.0\.1:(\d+)/.exec(output)
+      if (match) resolve(match[1])
+    })
+  })
+  const base = 'http://127.0.0.1:' + port
+  const path = '/api/sync/v1/book?id=auth-test'
+  assert.equal((await fetch(base + path)).status, 401)
+  const session = await fetch(base + '/api/session', {
+    method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  assert.equal(session.status, 200)
+  const cookie = session.headers.get('set-cookie').split(';')[0]
+  const body = JSON.stringify({ baseRevision: null, operationId: 'auth-operation',
+    book: { id: 'auth-test', title: '同步验收', volumes: [{ chapters: [] }] } })
+  const write = (source) => fetch(base + path, {
+    method: 'PUT', headers: { Origin: source, Cookie: cookie, 'Content-Type': 'application/json' }, body,
+  })
+  assert.equal((await write('https://unrelated.example.test')).status, 403)
+  assert.equal((await write(origin)).status, 200)
+  const catalog = await fetch(base + '/api/sync/v1/books', { headers: { Cookie: cookie } })
+  assert.equal(catalog.status, 200)
+  assert.deepEqual((await catalog.json()).books.map(book => book.id), ['auth-test'])
 })

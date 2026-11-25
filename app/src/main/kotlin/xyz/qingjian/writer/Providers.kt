@@ -58,7 +58,7 @@ internal val providerPresets = listOf(
 
 internal data class ProviderAccount(
     val id: String, val name: String, val endpoint: String, val protocol: ModelProtocol,
-    val model: String, val key: String, val enabled: Boolean = true
+    val model: String, val key: String, val enabled: Boolean = true, val customHeaders: String = ""
 ) {
     fun url(path: String) = endpoint.trim().trimEnd('/').toHttpUrl().let { base ->
         require(base.isHttps && base.username.isEmpty() && base.password.isEmpty() &&
@@ -67,6 +67,32 @@ internal data class ProviderAccount(
         path.split('/').forEach { builder.addPathSegment(it) }
         builder.build()
     }
+}
+
+// Based on Eta's CustomHeaderFilter. Authentication and HTTP framing are
+// supplied by the chosen protocol and OkHttp.
+internal fun providerHeaders(source: String): List<Pair<String, String>> {
+    val reserved = setOf(
+        "host", "content-length", "content-type", "connection", "transfer-encoding",
+        "content-encoding", "accept-encoding", "expect", "keep-alive", "proxy-connection",
+        "upgrade", "authorization", "proxy-authorization", "x-api-key", "x-goog-api-key",
+        "anthropic-version", "cookie", "origin"
+    )
+    require(source.length <= 16_384) { "自定义请求头太长。" }
+    val names = mutableSetOf<String>()
+    return source.lineSequence().filter(String::isNotBlank).mapIndexed { index, line ->
+        val separator = line.indexOf(':')
+        require(separator > 0) { "第 ${index + 1} 行请求头缺少名称或冒号。" }
+        val name = line.substring(0, separator).trim()
+        val value = line.substring(separator + 1).trim(' ', '\t')
+        val normalized = name.lowercase()
+        require(normalized !in reserved && name.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]+"))) {
+            "第 ${index + 1} 行请求头名称无效或由系统管理。"
+        }
+        require(value.all { it == '\t' || it in ' '..'~' }) { "请求头值须使用可打印 ASCII 字符。" }
+        require(names.add(normalized)) { "请求头名称重复。" }
+        name to value
+    }.toList()
 }
 
 internal class ProviderVault(context: Context) {
@@ -80,7 +106,8 @@ internal class ProviderVault(context: Context) {
             val id = row.getString("id")
             ProviderAccount(id, row.getString("name"), row.getString("endpoint"),
                 ModelProtocol.valueOf(row.getString("protocol")), row.getString("model"),
-                open(row.getString("key"), id), row.optBoolean("enabled", true))
+                open(row.getString("key"), id), row.optBoolean("enabled", true),
+                row.optString("headers").takeIf(String::isNotEmpty)?.let { open(it, "$id/headers") }.orEmpty())
         }
     }
 
@@ -90,6 +117,7 @@ internal class ProviderVault(context: Context) {
                 .put("endpoint", account.endpoint).put("protocol", account.protocol.name)
                 .put("model", account.model).put("enabled", account.enabled)
                 .put("key", seal(account.key, account.id))
+                .put("headers", seal(account.customHeaders, "${account.id}/headers"))
         }
         check(storage.edit().putString("accounts", JSONArray(rows).toString()).commit()) { "账号保存失败。" }
     }
@@ -284,6 +312,7 @@ internal class ModelClient {
 
     private fun request(account: ProviderAccount, path: String): Request.Builder =
         Request.Builder().url(account.url(path)).apply {
+            for ((name, value) in providerHeaders(account.customHeaders)) header(name, value)
             if (account.protocol == ModelProtocol.Anthropic) {
                 header("x-api-key", account.key)
                 header("anthropic-version", "2023-06-01")

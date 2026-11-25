@@ -138,7 +138,7 @@ internal fun ParagraphInspector(
 }
 
 @Composable
-private fun ParagraphDialog(title: String, initial: String, dismiss: () -> Unit, complete: (String) -> Unit) {
+internal fun ParagraphDialog(title: String, initial: String, dismiss: () -> Unit, complete: (String) -> Unit) {
     var value by rememberSaveable { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = dismiss, title = { Text(title) },

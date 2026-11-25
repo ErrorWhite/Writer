@@ -160,6 +160,7 @@ private fun RoleplayConversation(
     val messages = remember(session) { session.records("messages") }
     val list = rememberLazyListState()
     var branching by remember { mutableStateOf<Int?>(null) }
+    var reference by remember { mutableStateOf<JSONObject?>(null) }
 
     fun request(text: String?, rewrite: Boolean) {
         val target = if (rewrite) messages.lastOrNull()?.takeIf { it.string("role") == "assistant" }?.string("id") else null
@@ -228,6 +229,9 @@ private fun RoleplayConversation(
                             }
                             TextButton(enabled = !running, onClick = { branching = messages.indexOf(message) }) { Text("从此分支") }
                         }
+                        if (bookId != standaloneRoleplayId && !user) {
+                            TextButton(enabled = !running, onClick = { reference = message }) { Text("采用为参考") }
+                        }
                     }
                 }
             }
@@ -272,6 +276,29 @@ private fun RoleplayConversation(
                     TextButton(onClick = { request(null, true) }) { Text("重写回复") }
                 }
         }
+    }
+    reference?.let { reply ->
+        AlertDialog(
+            onDismissRequest = { reference = null }, title = { Text("采用为参考卡") },
+            text = { Text(reply.string("text"), maxLines = 8) },
+            confirmButton = {
+                TextButton(onClick = {
+                    model.perform {
+                        mutateBook(bookId) {
+                            val items = it.obj("creative").array("references")
+                            if (items.objects().none { item -> item.string("roleplayMessage") == reply.string("id") }) {
+                                items.put(JSONObject().put("id", newId()).put("title", session.string("title"))
+                                    .put("structure", reply.string("text")).put("source", "文本扮演")
+                                    .put("roleplayMessage", reply.string("id")).put("confirmed", true))
+                            }
+                        }
+                        model.notice("已收入工作台的参考卡")
+                    }
+                    reference = null
+                }) { Text("采用") }
+            },
+            dismissButton = { TextButton(onClick = { reference = null }) { Text("取消") } }
+        )
     }
     branching?.let { index ->
         AlertDialog(

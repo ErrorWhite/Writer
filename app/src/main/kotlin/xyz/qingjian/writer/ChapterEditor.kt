@@ -51,6 +51,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 @Composable
 internal fun ChapterEditor(
@@ -81,9 +82,10 @@ private fun ChapterBody(
     val keyboard = LocalSoftwareKeyboardController.current
     val viewport = rememberLazyListState(position.block, position.offset)
     val renderSource = active?.source ?: text
-    val blocks by produceState(emptyList<EditorBlock>(), renderSource) {
-        value = withContext(Dispatchers.Default) { editorBlocks(renderSource) }
+    val projection by produceState("" to emptyList<EditorBlock>(), renderSource) {
+        value = withContext(Dispatchers.Default) { renderSource to editorBlocks(renderSource) }
     }
+    val (parsedText, blocks) = projection
     LaunchedEffect(viewport) {
         snapshotFlow {
             WritingPosition(editor.selection.start, editor.selection.end,
@@ -108,7 +110,17 @@ private fun ChapterBody(
     var aiRange by remember { mutableStateOf<TextRange?>(null) }
     var pickedParagraphs by remember { mutableStateOf(setOf<Int>()) }
     var closeChapter by rememberSaveable { mutableStateOf(false) }
+    var paragraphActions by remember { mutableStateOf<Int?>(null) }
     val settings = remember(book.payload) { org.json.JSONObject(book.payload) }
+    val inlineCandidates = remember(chapter.payload, text) {
+        val review = JSONObject(chapter.payload).optJSONObject("nativeReview")
+        when {
+            review == null || review.string("baseline") != text -> emptyList()
+            review.string("intent") == "Paragraph" -> listOf(review)
+            review.string("intent") == "Batch" -> review.records("items")
+            else -> emptyList()
+        }
+    }
     val bodySize = settings.optInt("fontSize", 17).coerceIn(13, 32).sp
     val goal = settings.optInt("goal")
     val paper = if (settings.string("paper") == "warm" && WriterTheme.colorScheme.surface.luminance() > 0.5f) {
@@ -262,22 +274,37 @@ private fun ChapterBody(
                                 )
                                 WritingField(local, ::updateInside, bodyStyle, Modifier.fillMaxWidth())
                             } else {
-                                Box(Modifier.fillMaxWidth().clickable {
-                                    val previous = active
-                                    if (previous != null) {
-                                        finishEditing()
-                                        return@clickable
+                                Column(Modifier.fillMaxWidth()) {
+                                    Box(Modifier.fillMaxWidth().clickable(enabled = parsedText == renderSource) {
+                                        if (active != null) {
+                                            finishEditing()
+                                            return@clickable
+                                        }
+                                        val selected = editor.selection.takeIf {
+                                            it.min >= block.start && it.max <= block.end
+                                        } ?: TextRange(block.end)
+                                        editor = editor.copy(selection = selected, composition = null)
+                                        active = ActiveBlock(index, block.start, block.end, editor.text)
+                                    }.padding(vertical = 2.dp)) {
+                                        val node = block.node
+                                        if (node == null) Text("点这里开始写作",
+                                            color = WriterTheme.colorScheme.onSurfaceVariant, style = bodyStyle)
+                                        else ManuscriptBlock(node, bodyStyle)
                                     }
-                                    val selected = editor.selection.takeIf {
-                                        it.min >= block.start && it.max <= block.end
-                                    } ?: TextRange(block.end)
-                                    editor = editor.copy(selection = selected, composition = null)
-                                    active = ActiveBlock(index, block.start, block.end, editor.text)
-                                }.padding(vertical = 2.dp)) {
-                                    val node = block.node
-                                    if (node == null) Text("点这里开始写作",
-                                        color = WriterTheme.colorScheme.onSurfaceVariant, style = bodyStyle)
-                                    else ManuscriptBlock(node, bodyStyle)
+                                    inlineCandidates.firstOrNull { it.optInt("start", -1) in block.start until block.end }
+                                        ?.let { candidate ->
+                                            Surface(Modifier.fillMaxWidth(), shape = WriterTheme.shapes.medium,
+                                                color = WriterTheme.colorScheme.surfaceContainer) {
+                                                Column(Modifier.padding(10.dp)) {
+                                                    Text(candidate.string("after"), maxLines = 4, style = WriterTheme.typography.bodyMedium)
+                                                    TextButton(onClick = {
+                                                        aiRange = TextRange(candidate.optInt("start"))
+                                                        pickedParagraphs = emptySet()
+                                                        ai = true
+                                                    }) { Text("审阅候选") }
+                                                }
+                                            }
+                                        }
                                 }
                             }
                         }
@@ -298,13 +325,23 @@ private fun ChapterBody(
                     }) { Text("重做") }
                     TextButton(onClick = { insertPair("「", "」") }) { Text("「」") }
                     TextButton(onClick = { insertPair("（", "）") }) { Text("（）") }
-                    TextButton(onClick = { formatting = !formatting }) { Text("格式") }
                     TextButton(onClick = {
                         aiRange = editor.selection
                         pickedParagraphs = emptySet()
                         finishEditing()
                         ai = true
                     }) { Text("AI") }
+                    TextButton(onClick = {
+                        val index = paragraphSpans(editor.text).indexOfFirst {
+                            editor.selection.min in it.start..it.end
+                        }
+                        if (index < 0) model.notice("请先将光标移到正文段落。")
+                        else {
+                            paragraphActions = index
+                            finishEditing()
+                        }
+                    }) { Text("段落") }
+                    TextButton(onClick = { formatting = !formatting }) { Text("格式") }
                 }
             }
         }
@@ -314,6 +351,71 @@ private fun ChapterBody(
     if (find) FindDialog(editor, { sourceMode = true; active = null; change(it, true) }) { find = false }
     if (ai) WritingAiDialog(model, book, chapter, aiRange ?: editor.selection, pickedParagraphs) { ai = false }
     if (closeChapter) ManualHandoff(model, chapter) { closeChapter = false }
+    paragraphActions?.let { index ->
+        InlineParagraphActions(model, book, chapter, editor.text, index) { paragraphActions = null }
+    }
+}
+
+@Composable
+private fun InlineParagraphActions(
+    model: WriterModel, book: BookRow, chapter: ChapterRow, body: String, index: Int, dismiss: () -> Unit
+) {
+    val span = remember(body, index) { paragraphSpans(body).getOrNull(index) } ?: return
+    val row = remember(chapter.payload, index) { JSONObject(chapter.payload).records("paragraphs").getOrNull(index) }
+    val related = remember(book.payload, row) {
+        val research = JSONObject(book.payload).obj("research")
+        fun matches(point: JSONObject?) = point != null && row != null &&
+            point.string("chapterId") == chapter.id && point.string("paragraphId") == row.string("id")
+        research.records("annotations").filter { matches(it.optJSONObject("anchor")) }.map { it.string("text") } +
+            research.records("foreshadows").filter { item ->
+                item.records("anchors").any { matches(it.optJSONObject("anchor")) }
+            }.map { it.string("title") }
+    }
+    var action by rememberSaveable { mutableStateOf("") }
+    fun persist(type: String, value: String) = model.perform {
+        var point: JSONObject? = null
+        mutateChapter(book.id, chapter.id, bookEdit = if (type in setOf("批注", "伏笔")) { document ->
+            val anchor = requireNotNull(point)
+            val research = document.obj("research")
+            if (type == "批注") research.array("annotations").put(JSONObject()
+                .put("id", newId()).put("kind", "批注").put("text", value).put("anchor", anchor))
+            else research.array("foreshadows").put(JSONObject().put("id", newId()).put("title", value.take(100))
+                .put("description", value).put("status", "open").put("anchors", org.json.JSONArray()
+                    .put(JSONObject().put("id", newId()).put("role", "铺垫").put("quote", span.text).put("anchor", anchor))))
+        } else null) { source ->
+            check(source.string("text") == body) { "正文已更新，请重新选择段落。" }
+            editChapter(source, body, ensureParagraphs = true)
+            val paragraph = source.records("paragraphs")[index]
+            point = JSONObject().put("chapterId", chapter.id).put("paragraphId", paragraph.string("id"))
+            when (type) {
+                "提示" -> paragraph.put("instruction", value)
+                "反馈" -> paragraph.put("vote", if (paragraph.string("vote") == value) "" else value)
+            }
+        }
+    }
+    if (action.isNotEmpty()) {
+        ParagraphDialog(action, if (action == "提示") row?.string("instruction").orEmpty() else "", dismiss) { value ->
+            if (action == "提示" || value.isNotBlank()) persist(action, value)
+            dismiss()
+        }
+    } else AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("段落", style = WriterTheme.typography.titleLarge) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(span.text, maxLines = 4)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    listOf("提示", "批注", "伏笔").forEach { name ->
+                        TextButton(onClick = { action = name }) { Text(name) }
+                    }
+                    TextButton(onClick = { persist("反馈", "keep"); dismiss() }) { Text("赞") }
+                    TextButton(onClick = { persist("反馈", "revise"); dismiss() }) { Text("踩") }
+                }
+                related.forEach { Text(it, style = WriterTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
 }
 
 @Composable

@@ -3,3 +3,8 @@
 local.properties
 *.jks
 *.keystore
+/desktop/dist/
+/desktop/node_modules/
+/desktop/.qingjian/
+/desktop/.env*
+/desktop/.novel-web-access.local

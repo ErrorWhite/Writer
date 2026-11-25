@@ -74,4 +74,4 @@ const server = createServer((request, response) => {
   })
 })
 const port = Number(process.env.QINGJIAN_PORT || 4173)
-server.listen(port, '127.0.0.1', () => console.log(`Qingjian listening on 127.0.0.1:${port}`))
+server.listen(port, '127.0.0.1', () => console.log(`Qingjian listening on 127.0.0.1:${server.address().port}`))

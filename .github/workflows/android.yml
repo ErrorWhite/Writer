@@ -48,6 +48,7 @@ jobs:
 
   writing-flow:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: check
     steps:
       - uses: actions/checkout@v6

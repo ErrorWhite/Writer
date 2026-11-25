@@ -21,6 +21,8 @@ import io.github.mangi.eta.data.provider.CommunityCatalog
 import io.github.mangi.eta.data.provider.CommunityCatalogProvider
 import io.github.suqi8.coui.kmp.basic.RadioButton
 import io.github.suqi8.coui.kmp.basic.Switch
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardListGroup
 
 @Composable
 internal fun ProviderSettings(model: WriterModel) {
@@ -34,16 +36,18 @@ internal fun ProviderSettings(model: WriterModel) {
     var loadingCatalog by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("模型账号", style = WriterTheme.typography.titleLarge)
-        accounts.orEmpty().forEach { account ->
-            Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
+        if (!accounts.isNullOrEmpty()) Card {
+            CardListGroup {
+                accounts.orEmpty().forEach { account -> item(account.id) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected == account.id, { model.useAccount(account.id) }, enabled = account.enabled)
                     Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
                         Text(account.name, style = WriterTheme.typography.titleMedium)
-                        Text(account.model, style = WriterTheme.typography.bodySmall)
+                        Text("${account.protocol.label} · ${account.model}", style = WriterTheme.typography.bodySmall)
                     }
                     TextButton(onClick = { edit = account }) { Text("编辑") }
                 }
+                } }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -135,6 +139,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
     var connecting by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var deleting by remember { mutableStateOf(false) }
+    var advanced by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = dismiss,
         title = { Text(if (exists) "编辑模型账号" else "添加模型账号") },
@@ -164,8 +169,12 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 }
                 OutlinedTextField(value.endpoint, { value = value.copy(endpoint = it) }, Modifier.fillMaxWidth(),
                     singleLine = true, label = { Text("HTTPS API 地址") })
+                if (value.protocol == ModelProtocol.Vertex) {
+                    Text("填写含项目、地域及 /publishers/google 的 Vertex AI 地址。")
+                }
                 OutlinedTextField(value.key, { value = value.copy(key = it) }, Modifier.fillMaxWidth(),
-                    singleLine = true, password = true, label = { Text("API Key") })
+                    singleLine = true, password = true,
+                    label = { Text(if (value.protocol == ModelProtocol.Vertex) "Google OAuth 访问令牌" else "API Key") })
                 OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(),
                     singleLine = true, label = { Text("模型 ID") })
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -185,6 +194,9 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                     }
                 }) { Text("测试连接并拉取模型") }
                 if (status.isNotEmpty()) Text(status)
+                TextButton(onClick = { advanced = !advanced }) { Text("自定义请求头") }
+                if (advanced) OutlinedTextField(value.customHeaders, { value = value.copy(customHeaders = it) },
+                    Modifier.fillMaxWidth(), minLines = 2, label = { Text("每行一个 名称: 值") })
                 if (exists) TextButton(onClick = { deleting = true }) {
                     Text("删除账号", color = WriterTheme.colorScheme.error)
                 }
@@ -193,6 +205,12 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
         dismissButton = { TextButton(onClick = dismiss) { Text("取消") } },
         confirmButton = {
             TextButton(enabled = value.model.isNotBlank() && value.key.isNotBlank() && value.name.isNotBlank(), onClick = {
+                try {
+                    providerHeaders(value.customHeaders)
+                } catch (error: IllegalArgumentException) {
+                    status = error.localizedMessage.orEmpty()
+                    return@TextButton
+                }
                 model.saveAccount(value.copy(name = value.name.trim(), model = value.model.trim(), key = value.key.trim()))
                 dismiss()
             }) { Text("保存") }
