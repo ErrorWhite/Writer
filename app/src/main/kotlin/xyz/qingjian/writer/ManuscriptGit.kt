@@ -14,6 +14,7 @@ import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.lib.TreeFormatter
 import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.storage.file.WindowCacheConfig
 import org.eclipse.jgit.treewalk.TreeWalk
 import org.json.JSONObject
 
@@ -123,7 +124,10 @@ internal class ManuscriptGit(private val root: File) {
 
     internal fun directory(bookId: String) = File(root, hash(bookId) + ".git")
 
-    private fun open(dir: File): Repository = FileRepositoryBuilder().setGitDir(dir).setBare().build()
+    private fun open(dir: File): Repository {
+        gitCache
+        return FileRepositoryBuilder().setGitDir(dir).setBare().build()
+    }
 
     private fun update(repo: Repository, ref: String, value: ObjectId, expected: ObjectId?) {
         val change = repo.updateRef(ref)
@@ -138,6 +142,8 @@ internal class ManuscriptGit(private val root: File) {
         return location.use { repo.open(it.getObjectId(0)).getBytes(64 * 1024 * 1024).toString(Charsets.UTF_8) }
     }
 }
+
+private val gitCache by lazy { WindowCacheConfig().apply { setExposeStatsViaJmx(false) }.install() }
 
 private val validBranch = Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}")
 private fun ref(name: String): String {
