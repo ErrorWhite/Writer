@@ -34,6 +34,8 @@ jobs:
           gradle-version: '9.9.2'
       - name: Run native tests and lint
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug
+      - name: Check release code shrinking
+        run: gradle --no-daemon :app:minifyReleaseWithR8
       - uses: actions/upload-artifact@v4
         if: always()
         with:
