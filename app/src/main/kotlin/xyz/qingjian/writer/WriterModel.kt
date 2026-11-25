@@ -48,6 +48,7 @@ internal data class ImportPreview(val book: JSONObject, val existing: BookRow?) 
 
 internal class WriterModel(private val application: Application) : AndroidViewModel(application) {
     val library = Library(application)
+    val gitHistory = ManuscriptGit(java.io.File(application.filesDir, "book-history"))
     private val resolver: ContentResolver = application.contentResolver
     private val lock = Mutex()
     private var writer: Job? = null
@@ -63,6 +64,9 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val mutableAccounts = MutableStateFlow<List<ProviderAccount>?>(null)
     val accounts = mutableAccounts.asStateFlow()
     private val selectedAccountKey = stringPreferencesKey("active_provider_account")
+    private val imagesKey = stringPreferencesKey("images_enabled")
+    val imagesEnabled = application.preferences.data.map { it[imagesKey] == "true" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val studioEndpointKey = stringPreferencesKey("studio_endpoint")
     val studioEndpoint = application.preferences.data.map { it[studioEndpointKey].orEmpty() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
@@ -117,6 +121,56 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     }
 
     fun useAccount(id: String) = perform { selectAccount(id) }
+
+    fun enableImages(enabled: Boolean) = perform { application.preferences.edit { it[imagesKey] = enabled.toString() } }
+
+    private val mutableImage = MutableStateFlow<ImageCandidate?>(null)
+    val imageCandidate = mutableImage.asStateFlow()
+    private var imageJob: Job? = null
+
+    fun generateImage(bookId: String, model: String, prompt: String) {
+        if (imageJob?.isActive == true) return
+        if (!imagesEnabled.value) return
+        val account = mutableAccounts.value.orEmpty().firstOrNull {
+            it.id == activeAccount.value && it.enabled && it.protocol == ModelProtocol.Responses
+        }
+        if (account == null) {
+            notice("请先选择支持图像接口的 OpenAI 账号。")
+            return
+        }
+        mutableImage.value = ImageCandidate(bookId, prompt, busy = true)
+        imageJob = viewModelScope.launch {
+            try {
+                val image = client.image(account, model, prompt)
+                val compressed = withContext(Dispatchers.Default) { compressImage(image) }
+                mutableImage.value = ImageCandidate(bookId, prompt, bytes = compressed)
+            } catch (error: CancellationException) {
+                mutableImage.value = null
+                throw error
+            } catch (error: Exception) {
+                mutableImage.value = ImageCandidate(bookId, prompt, error = error.localizedMessage ?: "配图失败。")
+            }
+        }
+    }
+
+    fun cancelImage() { imageJob?.cancel() }
+
+    fun applyImage(bookId: String, cover: Boolean) = perform {
+        val candidate = mutableImage.value?.takeIf { it.bookId == bookId } ?: return@perform
+        val bytes = checkNotNull(candidate.bytes) { "尚未生成配图。" }
+        val data = "data:image/jpeg;base64,${Base64.getEncoder().encodeToString(bytes)}"
+        if (cover) setCover(bookId, data)
+        else mutateBook(bookId) {
+            val assets = it.obj("creative").array("assets")
+            require(assets.objects().sumOf { row -> row.string("data").toByteArray(Charsets.UTF_8).size } +
+                data.length <= 2 * 1024 * 1024) { "资料附件总大小不能超过 2 MB。" }
+            assets.put(JSONObject().put("id", newId()).put("title", "生成配图").put("type", "image")
+                .put("group", "配图").put("data", data).put("summary", candidate.prompt.take(300))
+                .put("source", "ai-image").put("updatedAt", System.currentTimeMillis()))
+        }
+        mutableImage.value = null
+        notice(if (cover) "已采用为封面" else "已保存到资料附件")
+    }
 
     fun useStudio() = perform {
         check(mutableStudioStatus.value?.optBoolean("codex") == true) { "请先在青简服务器启用已登录的 Codex 账号。" }
@@ -282,6 +336,41 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         opened(session.string("id"))
     }
 
+    fun importSkill(bookId: String, uri: Uri) = perform {
+        val record = withContext(Dispatchers.IO) {
+            readSkillPackage(fileName(uri), read(uri, 3, "技能包不能超过 3 MB。"))
+        }
+        mutateBook(bookId) { it.obj("skills").array("custom").put(record) }
+        notice("已导入写作技能")
+    }
+
+    fun importAsset(bookId: String, uri: Uri) = perform {
+        val asset = withContext(Dispatchers.IO) {
+            val stream = requireNotNull(resolver.openInputStream(uri)) { "无法打开附件。" }
+            val bytes = stream.use { it.readLimited(640 * 1024, "资料附件不能超过 640 KB。") }
+            val mime = resolver.getType(uri)
+            val image = mime in coverTypes || mime == "image/gif"
+            val content = if (image) "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}" else bytes.toString(Charsets.UTF_8)
+            require(content.toByteArray(Charsets.UTF_8).size <= 640 * 1024) { "资料附件不能超过 640 KB。" }
+            JSONObject().put("id", newId()).put("title", fileName(uri)).put("type", if (image) "image" else "markdown")
+                .put("group", "").put("summary", "").put("data", content).put("updatedAt", System.currentTimeMillis())
+        }
+        mutateBook(bookId) {
+            val assets = it.obj("creative").array("assets")
+            val bytes = assets.objects().sumOf { row -> row.string("data").toByteArray(Charsets.UTF_8).size }
+            require(bytes + asset.string("data").toByteArray(Charsets.UTF_8).size <= 2 * 1024 * 1024) {
+                "当前作品的资料附件总大小不能超过 2 MB。"
+            }
+            assets.put(asset)
+        }
+        notice("已添加附件")
+    }
+
+    private fun fileName(uri: Uri): String = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+        null, null, null)?.use { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(0) else null
+    } ?: "附件"
+
     fun exportRoleplay(uri: Uri, data: () -> ByteArray) = perform {
         withContext(Dispatchers.IO) {
             val stream = requireNotNull(resolver.openOutputStream(uri, "wt")) { "无法打开导出文件。" }
@@ -412,6 +501,16 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         notice("已还原全书")
     }
 
+    fun restoreGitVersion(bookId: String, oid: String, restored: () -> Unit) = perform {
+        val drafts = mutableDrafts.value
+        val snapshot = gitHistory.snapshot(bookId, oid)
+        snapshotBook(bookId)
+        store(snapshot, bookId)
+        mutableDrafts.value = mutableDrafts.value.filter { (key, value) -> key.bookId != bookId || drafts[key] !== value }
+        restored()
+        notice("已还原 Git 版本")
+    }
+
     fun deleteBook(bookId: String, deleted: () -> Unit) = perform {
         remove(bookId)
         mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != bookId }
@@ -427,6 +526,30 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
 }
 
 internal const val STUDIO_ACCOUNT = "qingjian-codex-server"
+
+internal data class ImageCandidate(val bookId: String, val prompt: String, val busy: Boolean = false,
+    val bytes: ByteArray? = null, val error: String? = null)
+
+private fun compressImage(bytes: ByteArray): ByteArray {
+    val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    require(options.outWidth in 1..8192 && options.outHeight in 1..8192) { "生成的图片尺寸无效。" }
+    options.inJustDecodeBounds = false
+    options.inSampleSize = (maxOf(options.outWidth, options.outHeight) / 1536).coerceAtLeast(1)
+    val decoded = requireNotNull(android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)) {
+        "无法读取生成的图片。"
+    }
+    try {
+        for (quality in listOf(88, 76, 64, 48, 32)) {
+            val output = ByteArrayOutputStream()
+            check(decoded.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, output)) { "图片压缩失败。" }
+            if (output.size() <= 470 * 1024) return output.toByteArray()
+        }
+        error("图片压缩后仍超过附件限制。")
+    } finally {
+        decoded.recycle()
+    }
+}
 
 internal data class Generation(val running: Boolean, val text: String = "", val reasoning: String = "",
     val completed: Boolean = false, val error: String? = null)

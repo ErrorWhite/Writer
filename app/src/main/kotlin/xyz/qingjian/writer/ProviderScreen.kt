@@ -33,6 +33,7 @@ internal fun ProviderSettings(model: WriterModel) {
     val accounts by model.accounts.collectAsStateWithLifecycle()
     val selected by model.activeAccount.collectAsStateWithLifecycle()
     val usage by model.usage.collectAsStateWithLifecycle()
+    val images by model.imagesEnabled.collectAsStateWithLifecycle()
     var edit by remember { mutableStateOf<ProviderAccount?>(null) }
     var showUsage by remember { mutableStateOf(false) }
     var catalog by remember { mutableStateOf<CommunityCatalog?>(null) }
@@ -66,6 +67,7 @@ internal fun ProviderSettings(model: WriterModel) {
             }
         }) { Text(if (loadingCatalog) "读取模型目录…" else "浏览社区模型目录") }
         CodexSettings(model, selected)
+        CheckOption("启用 AI 配图", images, model::enableImages)
     }
     edit?.let { account ->
         AccountDialog(model, account, accounts.orEmpty().any { it.id == account.id }) { edit = null }

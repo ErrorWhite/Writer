@@ -38,6 +38,7 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     var writingOpen by rememberSaveable { mutableStateOf(false) }
     var snapshotsOpen by rememberSaveable { mutableStateOf(false) }
     var templateOpen by rememberSaveable { mutableStateOf(false) }
+    var gitOpen by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("创作配置", style = MaterialTheme.typography.titleLarge)
         OutlinedButton(onClick = { profileOpen = true }) { Text("作品立项与文风") }
@@ -45,6 +46,7 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
         OutlinedButton(onClick = { templateOpen = true }) { Text("任务提示词模板") }
         OutlinedButton(onClick = { writingOpen = true }) { Text("写作外观与目标") }
         OutlinedButton(onClick = { snapshotsOpen = true }) { Text("全书还原点") }
+        OutlinedButton(onClick = { gitOpen = true }) { Text("Git 版本历史") }
     }
     if (profileOpen) {
         val profile = payload.optJSONObject("aiSetup") ?: JSONObject()
@@ -147,6 +149,7 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
         }
     }
     if (snapshotsOpen) BookVersionDialog(model, book) { snapshotsOpen = false }
+    if (gitOpen) GitTimeline(model, book) { gitOpen = false }
 }
 
 @Composable

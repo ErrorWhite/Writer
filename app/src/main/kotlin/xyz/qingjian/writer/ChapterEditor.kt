@@ -93,6 +93,9 @@ private fun ChapterBody(
     var find by rememberSaveable { mutableStateOf(false) }
     var formatting by rememberSaveable { mutableStateOf(false) }
     var ai by rememberSaveable { mutableStateOf(false) }
+    var paragraphMode by rememberSaveable { mutableStateOf(false) }
+    var aiRange by remember { mutableStateOf<TextRange?>(null) }
+    var pickedParagraphs by remember { mutableStateOf(setOf<Int>()) }
     var closeChapter by rememberSaveable { mutableStateOf(false) }
     val settings = remember(book.payload) { org.json.JSONObject(book.payload) }
     val bodySize = settings.optInt("fontSize", 17).coerceIn(13, 32).sp
@@ -139,7 +142,10 @@ private fun ChapterBody(
                         DropdownMenuItem(text = { Text("查找与替换") }, onClick = { find = true; menu = false })
                         DropdownMenuItem(text = { Text(if (focus) "退出专注模式" else "专注模式") },
                             onClick = { toggleFocus(); menu = false })
-                        DropdownMenuItem(text = { Text("AI 写作与审阅") }, onClick = { ai = true; menu = false })
+                        DropdownMenuItem(text = { Text("AI 写作与审阅") }, onClick = {
+                            aiRange = null; pickedParagraphs = emptySet(); ai = true; menu = false
+                        })
+                        DropdownMenuItem(text = { Text("逐段操作") }, onClick = { paragraphMode = true; menu = false })
                         DropdownMenuItem(text = { Text("定稿与下章交接") }, onClick = { closeChapter = true; menu = false })
                     }
                 }
@@ -182,7 +188,14 @@ private fun ChapterBody(
             }
             if (formatting && !preview) FormatBar(editor) { change(it, true) }
             Surface(Modifier.weight(1f).fillMaxWidth(), color = paper, shape = MaterialTheme.shapes.large) {
-                if (preview) {
+                if (paragraphMode) {
+                    ParagraphInspector(model, book, chapter, text, close = { paragraphMode = false },
+                        changed = { change(TextFieldValue(it), true) }, ask = { range, indices ->
+                            aiRange = range
+                            pickedParagraphs = indices
+                            ai = true
+                        })
+                } else if (preview) {
                     MarkdownPreview(text)
                 } else {
                     BasicTextField(
@@ -208,7 +221,7 @@ private fun ChapterBody(
     if (details) ChapterDetails(model, chapter) { details = false }
     if (history) HistoryDialog(model, chapter) { history = false }
     if (find) FindDialog(editor, { change(it, true) }) { find = false }
-    if (ai) WritingAiDialog(model, book, chapter, editor.selection) { ai = false }
+    if (ai) WritingAiDialog(model, book, chapter, aiRange ?: editor.selection, pickedParagraphs) { ai = false }
     if (closeChapter) ManualHandoff(model, chapter) { closeChapter = false }
 }
 

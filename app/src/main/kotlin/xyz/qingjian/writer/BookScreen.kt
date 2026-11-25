@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -306,14 +307,15 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("工作台", style = MaterialTheme.typography.headlineSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                listOf("写作", "资料", "剧情", "配置").forEach { item ->
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                listOf("写作", "资料", "剧情", "附件", "配置").forEach { item ->
                     FilterChip(deskPage == item, { deskPage = item }, label = { Text(item) })
                 }
             }
             when (deskPage) {
                 "资料" -> ResearchWorkspace(model, book)
                 "剧情" -> StoryScreen(model, book, openEditor)
+                "附件" -> ResourcesScreen(model, book)
                 "配置" -> BookSettings(model, book)
                 else -> {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

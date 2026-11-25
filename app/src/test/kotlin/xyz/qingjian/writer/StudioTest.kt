@@ -3,18 +3,23 @@ package xyz.qingjian.writer
 import io.github.mangi.eta.agent.model.readProviderSse
 import io.github.mangi.eta.agent.roleplay.CharacterCardCodec
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 
 class StudioTest {
+    @get:Rule val temp = TemporaryFolder()
+
     @Test
     fun roleplayRetainsUnknownCardFieldsAndUsesCharacterWorldbook() {
         val card = readRoleplayCard("""
             {"spec":"chara_card_v3","spec_version":"3.0","outer":true,"data":{
-              "name":"听潮","description":"观察{​{user}}","first_mes":"你好，{{user}}",
+              "name":"听潮","description":"观察玩家","first_mes":"你好，{{user}}",
               "alternate_greetings":["备选开场"],"extensions":{"extra":17},
               "character_book":{"entries":[{"keys":["灯塔"],"content":"灯塔熄灭","enabled":true,"position":"before_char"}]}
             }}
@@ -63,5 +68,25 @@ class StudioTest {
         event.put("description", "作者后来编辑")
         undoHandoffArchive(book, delta)
         assertEquals("作者后来编辑", book.obj("research").records("events").single().string("description"))
+    }
+
+    @Test
+    fun gitHistoryStoresBranchesAndKeepsBookSnapshotsRestorable() {
+        runBlocking {
+            val git = ManuscriptGit(temp.root)
+            val book = Manuscript.create("雾港").put("outline", "第一版")
+            val id = book.string("id")
+            git.commit(id, "main", null, "初稿", book)
+            val initial = git.timeline(id, "main").commits.single()
+            git.branch(id, "rewrite", initial.oid)
+            git.commit(id, "rewrite", initial.oid, "改大纲", book.put("outline", "第二版"))
+            val second = git.timeline(id, "rewrite").commits.first()
+            assertEquals(initial.oid, git.timeline(id, "main").commits.single().oid)
+            assertEquals("第一版", git.snapshot(id, initial.oid).string("outline"))
+            assertEquals("第二版", git.snapshot(id, second.oid).string("outline"))
+            val diff = git.diff(id, second.oid).single { it.path == "outline.md" }
+            assertEquals("第一版", diff.before)
+            assertEquals("第二版", diff.after)
+        }
     }
 }

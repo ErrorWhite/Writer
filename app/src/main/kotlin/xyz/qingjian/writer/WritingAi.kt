@@ -154,8 +154,13 @@ internal fun writingContext(
         else -> null
     }
     if (template != null) optional["任务模板"] = creative?.optJSONObject("templates")?.string(template).orEmpty()
+    if (intent in setOf(WritingIntent.Paragraph, WritingIntent.Batch, WritingIntent.Rewrite, WritingIntent.Chapter)) {
+        optional["写作技能"] = skillPrompt(book, template.orEmpty())
+    }
     optional["世界书"] = worldBookMatches(creative?.optJSONObject("worldBook"), target + "\n" + instruction, limit)
         .joinToString("\n") { "${it.string("title")}：${it.string("content")}" }
+    optional["附件摘要"] = creative?.records("assets").orEmpty().filter { it.optBoolean("context") }
+        .take(6).joinToString("\n") { "${it.string("title")}：${it.string("summary").take(400)}" }
     optional["已确认资料"] = creative?.records("cards").orEmpty().filter {
         it.optBoolean("confirmed") && (it.optBoolean("pinned") ||
             it.string("title").takeIf(String::isNotBlank)?.let { title -> target.contains(title, ignoreCase = true) } == true)
@@ -176,14 +181,15 @@ internal fun writingContext(
 
 @Composable
 internal fun WritingAiDialog(
-    model: WriterModel, book: BookRow, chapter: ChapterRow, selection: TextRange, dismiss: () -> Unit
+    model: WriterModel, book: BookRow, chapter: ChapterRow, selection: TextRange,
+    pickedParagraphs: Set<Int>, dismiss: () -> Unit
 ) {
     val runId = "writing:${book.id}:${chapter.id}"
     val runs by model.generations.collectAsStateWithLifecycle()
     val run = runs[runId]
     val chapterPayload = remember(chapter.payload) { JSONObject(chapter.payload) }
     val review = chapterPayload.optJSONObject("nativeReview")
-    var intent by rememberSaveable { mutableStateOf(WritingIntent.Paragraph) }
+    var intent by rememberSaveable { mutableStateOf(if (pickedParagraphs.size > 1) WritingIntent.Batch else WritingIntent.Paragraph) }
     var instruction by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     var change by remember(review?.string("id")) { mutableStateOf(review?.string("after").orEmpty()) }
@@ -213,7 +219,9 @@ internal fun WritingAiDialog(
                 editChapter(source, baseline, ensureParagraphs = true)
                 val existing = source.records("paragraphs")
                 segments = spans.mapIndexedNotNull { index, candidate ->
-                    if (candidate.start >= selection.max || candidate.end <= selection.min) null else JSONObject()
+                    val chosen = if (pickedParagraphs.isEmpty()) candidate.start < selection.max && candidate.end > selection.min
+                        else index in pickedParagraphs
+                    if (!chosen || index !in existing.indices) null else JSONObject()
                         .put("id", existing[index].string("id")).put("start", candidate.start).put("before", candidate.text)
                 }.take(40)
                 require(segments.isNotEmpty()) { "选中的范围没有可改写段落。" }

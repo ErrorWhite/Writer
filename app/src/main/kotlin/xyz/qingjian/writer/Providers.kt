@@ -136,6 +136,18 @@ internal class ModelClient {
             System.currentTimeMillis())
     }
 
+    suspend fun image(account: ProviderAccount, model: String, prompt: String): ByteArray {
+        require(account.protocol == ModelProtocol.Responses && account.enabled) { "当前账号没有启用图像接口。" }
+        val body = JSONObject().put("model", model).put("prompt", prompt).put("size", "1024x1024").put("n", 1)
+        val outgoing = request(account, "images/generations").post(body.toString().toRequestBody(json)).build()
+        return execute(outgoing) { response, _ ->
+            val bytes = requireNotNull(response.body).byteStream().use { it.readLimited(16 * 1024 * 1024, "图片响应超过 16 MB。") }
+            val image = JSONObject(bytes.toString(Charsets.UTF_8)).records("data").firstOrNull()?.string("b64_json").orEmpty()
+            require(image.isNotBlank()) { "供应商未返回可保存的图像。" }
+            Base64.getDecoder().decode(image)
+        }
+    }
+
     suspend fun models(account: ProviderAccount): List<String> = execute(request(account, "models").build()) { response, _ ->
         val body = requireNotNull(response.body).byteStream().use {
             it.readLimited(8 * 1024 * 1024, "模型列表超过 8 MB。")
