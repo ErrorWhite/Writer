@@ -78,7 +78,7 @@ internal fun roleplayPrompt(
     val world = worldBookMatches(book.optJSONObject("creative")?.optJSONObject("worldBook"),
         recent.takeLast(4).joinToString("\n") { it.string("text") }, 4_000)
     val system = buildList {
-        add("以${card.name}的身份与$user进行文本扮演。遵守角色设定和剧情连续性，直接返回角色行动与对白，避免替玩家决定行动。")
+        add("以${card.name}的身份与${user}进行文本扮演。遵守角色设定和剧情连续性，直接返回角色行动与对白，避免替玩家决定行动。")
         add(matches.beforeCharacter)
         add(card.description.take(8_000))
         add(card.personality.take(3_000))

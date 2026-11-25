@@ -49,8 +49,8 @@ private fun page(title: String, body: String) = """
 """.trimIndent()
 
 private fun writeEpub(book: JSONObject, output: OutputStream) {
-    val parser = Parser.builder().build()
-    val renderer = HtmlRenderer.builder().escapeHtml(true).sanitizeUrls(true).build()
+    val parser = Parser.builder().extensions(writingExtensions).build()
+    val renderer = HtmlRenderer.builder().extensions(writingExtensions).escapeHtml(true).sanitizeUrls(true).build()
     ZipOutputStream(output).use { zip ->
         val mime = "application/epub+zip".toByteArray(Charsets.US_ASCII)
         zip.putNextEntry(ZipEntry("mimetype").apply {

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.mangi.eta.data.provider.CommunityCatalog
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.Base64
@@ -25,6 +26,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 
 private val Application.preferences by preferencesDataStore("qingjian")
 private val themeKey = stringPreferencesKey("theme")
@@ -57,9 +59,15 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     val notice = mutableNotice.asStateFlow()
     private val vault = ProviderVault(application)
     private val client = ModelClient()
+    private val studio = StudioServer(client)
     private val mutableAccounts = MutableStateFlow<List<ProviderAccount>?>(null)
     val accounts = mutableAccounts.asStateFlow()
     private val selectedAccountKey = stringPreferencesKey("active_provider_account")
+    private val studioEndpointKey = stringPreferencesKey("studio_endpoint")
+    val studioEndpoint = application.preferences.data.map { it[studioEndpointKey].orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    private val mutableStudioStatus = MutableStateFlow<JSONObject?>(null)
+    val studioStatus = mutableStudioStatus.asStateFlow()
     val activeAccount = application.preferences.data.map { it[selectedAccountKey] }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
     private val mutableGenerations = MutableStateFlow<Map<String, Generation>>(emptyMap())
@@ -110,6 +118,56 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
 
     fun useAccount(id: String) = perform { selectAccount(id) }
 
+    fun useStudio() = perform {
+        check(mutableStudioStatus.value?.optBoolean("codex") == true) { "请先在青简服务器启用已登录的 Codex 账号。" }
+        selectAccount(STUDIO_ACCOUNT)
+    }
+
+    fun signInStudio(endpoint: String, user: String, password: String) = perform {
+        val address = endpoint.trim().trimEnd('/')
+        studio.signIn(address, user, password)
+        if (studioEndpoint.value.isNotBlank() && studioEndpoint.value != address) {
+            runCatching { studio.signOut(studioEndpoint.value) }
+        }
+        application.preferences.edit { it[studioEndpointKey] = address }
+        mutableStudioStatus.value = studio.status(address)
+        notice("已登录青简服务器")
+    }
+
+    fun signOutStudio() = perform {
+        try {
+            studio.signOut(studioEndpoint.value)
+        } finally {
+            mutableStudioStatus.value = null
+            if (activeAccount.value == STUDIO_ACCOUNT) selectAccount(null)
+        }
+    }
+
+    fun refreshStudio() {
+        if (!studio.connected(studioEndpoint.value)) return
+        viewModelScope.launch {
+            try {
+                mutableStudioStatus.value = studio.status(studioEndpoint.value)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                notice(error.localizedMessage ?: "读取服务器状态失败。")
+            }
+        }
+    }
+
+    fun studioAction(resource: String, action: String, id: String? = null, value: String? = null) = perform {
+        val request = JSONObject().put("action", action).apply {
+            if (id != null) put("id", id)
+            if (value != null) put("name", value)
+        }
+        mutableStudioStatus.value = studio.action(studioEndpoint.value, resource, request)
+    }
+
+    fun configureStudio(model: String, effort: String, enabled: Boolean) = perform {
+        mutableStudioStatus.value = studio.action(studioEndpoint.value, "settings",
+            JSONObject().put("model", model).put("effort", effort).put("enabled", enabled))
+    }
+
     private suspend fun selectAccount(id: String?) {
         application.preferences.edit { if (id == null) it.remove(selectedAccountKey) else it[selectedAccountKey] = id }
     }
@@ -125,6 +183,17 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         }
     }
 
+    fun loadModelCatalog(complete: (Result<CommunityCatalog>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                complete(Result.success(client.catalog()))
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                complete(Result.failure(error))
+            }
+        }
+    }
+
     fun generate(
         id: String,
         intent: String,
@@ -132,8 +201,13 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         accept: suspend Library.(String) -> Unit = {}
     ) {
         if (requests[id]?.isActive == true) return
+        val studioAddress = studioEndpoint.value.takeIf { activeAccount.value == STUDIO_ACCOUNT }
         val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == activeAccount.value && it.enabled }
-        if (account == null) {
+        if (studioAddress != null && !studio.connected(studioAddress)) {
+            notice("请登录青简服务器，再使用 Codex。")
+            return
+        }
+        if (account == null && studioAddress == null) {
             notice("请先在设置中启用并选中一个模型账号。")
             return
         }
@@ -146,15 +220,20 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                     library.prepare()
                 }
                 var meter: ModelUsage? = null
-                val text = client.generate(account, system, messages,
-                    onText = { chunk -> updateGeneration(id) { it.copy(text = it.text + chunk) } },
-                    onReasoning = { chunk -> updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) } },
-                    onUsage = { meter = it })
+                val collectText: (String) -> Unit = { chunk -> updateGeneration(id) { it.copy(text = it.text + chunk) } }
+                val collectReasoning: (String) -> Unit = { chunk ->
+                    updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) }
+                }
+                val text = if (studioAddress != null) studio.generate(studioAddress, intent, system, messages,
+                    collectText, collectReasoning) { meter = it }
+                else client.generate(requireNotNull(account), system, messages, collectText, collectReasoning) { meter = it }
                 lock.withLock {
                     flush()
                     library.accept(text)
                     meter?.let {
-                        val entry = UsageEntry(java.time.LocalDate.now().toString(), intent, account.name, account.model,
+                        val serverModel = mutableStudioStatus.value?.optJSONObject("cli")?.string("model").orEmpty()
+                        val entry = UsageEntry(java.time.LocalDate.now().toString(), intent,
+                            account?.name ?: "青简 Codex", account?.model ?: serverModel,
                             it.input, it.output, it.cached)
                         val updated = (mutableUsage.value + entry).takeLast(2000)
                         withContext(Dispatchers.IO) {
@@ -346,6 +425,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
 
     fun notice(message: String?) { mutableNotice.value = message }
 }
+
+internal const val STUDIO_ACCOUNT = "qingjian-codex-server"
 
 internal data class Generation(val running: Boolean, val text: String = "", val reasoning: String = "",
     val completed: Boolean = false, val error: String? = null)

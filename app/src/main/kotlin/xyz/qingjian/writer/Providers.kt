@@ -4,6 +4,8 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import io.github.mangi.eta.agent.model.readProviderSse
+import io.github.mangi.eta.data.provider.CommunityCatalogParser
+import io.github.mangi.eta.data.provider.CommunityCatalogSource
 import java.security.KeyStore
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -38,8 +40,13 @@ internal val providerPresets = listOf(
     ProviderPreset("OpenAI", "https://api.openai.com/v1", ModelProtocol.Responses),
     ProviderPreset("DeepSeek", "https://api.deepseek.com/v1", ModelProtocol.Chat),
     ProviderPreset("Anthropic", "https://api.anthropic.com/v1", ModelProtocol.Anthropic),
+    ProviderPreset("阿里百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1", ModelProtocol.Chat),
     ProviderPreset("OpenRouter", "https://openrouter.ai/api/v1", ModelProtocol.Chat),
     ProviderPreset("Kimi", "https://api.moonshot.cn/v1", ModelProtocol.Chat),
+    ProviderPreset("MiMo", "https://api.xiaomimimo.com/v1", ModelProtocol.Chat),
+    ProviderPreset("MiniMax", "https://api.minimaxi.com/v1", ModelProtocol.Chat),
+    ProviderPreset("阶跃星辰", "https://api.stepfun.com/v1", ModelProtocol.Chat),
+    ProviderPreset("xAI", "https://api.x.ai/v1", ModelProtocol.Chat),
     ProviderPreset("硅基流动", "https://api.siliconflow.cn/v1", ModelProtocol.Chat)
 )
 
@@ -120,6 +127,14 @@ internal class ModelClient {
         .callTimeout(10, TimeUnit.MINUTES)
         .build()
     private val json = "application/json".toMediaType()
+
+    suspend fun catalog() = execute(Request.Builder().url("https://models.dev/api.json").build()) { response, _ ->
+        val data = requireNotNull(response.body).byteStream().use {
+            it.readLimited(24 * 1024 * 1024, "社区模型目录超过 24 MB。")
+        }
+        CommunityCatalogParser.parse(data.toString(Charsets.UTF_8), CommunityCatalogSource.ONLINE,
+            System.currentTimeMillis())
+    }
 
     suspend fun models(account: ProviderAccount): List<String> = execute(request(account, "models").build()) { response, _ ->
         val body = requireNotNull(response.body).byteStream().use {
@@ -212,7 +227,7 @@ internal class ModelClient {
             } else header("Authorization", "Bearer ${account.key}")
         }
 
-    private suspend fun <T> execute(request: Request, read: (Response, () -> Unit) -> T): T =
+    internal suspend fun <T> execute(request: Request, read: (Response, () -> Unit) -> T): T =
         suspendCancellableCoroutine { continuation ->
             val call = http.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }

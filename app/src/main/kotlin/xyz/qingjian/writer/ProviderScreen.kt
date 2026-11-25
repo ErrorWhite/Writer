@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.mangi.eta.data.provider.CommunityCatalog
+import io.github.mangi.eta.data.provider.CommunityCatalogProvider
 import io.github.suqi8.coui.kmp.basic.RadioButton
 import io.github.suqi8.coui.kmp.basic.Switch
 
@@ -33,6 +35,8 @@ internal fun ProviderSettings(model: WriterModel) {
     val usage by model.usage.collectAsStateWithLifecycle()
     var edit by remember { mutableStateOf<ProviderAccount?>(null) }
     var showUsage by remember { mutableStateOf(false) }
+    var catalog by remember { mutableStateOf<CommunityCatalog?>(null) }
+    var loadingCatalog by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("模型账号", style = MaterialTheme.typography.titleLarge)
         accounts.orEmpty().forEach { account ->
@@ -54,9 +58,23 @@ internal fun ProviderSettings(model: WriterModel) {
             }) { Text("添加账号") }
             OutlinedButton(onClick = { showUsage = true }) { Text("使用统计") }
         }
+        TextButton(enabled = !loadingCatalog, onClick = {
+            loadingCatalog = true
+            model.loadModelCatalog { result ->
+                loadingCatalog = false
+                result.onSuccess { catalog = it }.onFailure { model.notice(it.localizedMessage ?: "读取目录失败。") }
+            }
+        }) { Text(if (loadingCatalog) "读取模型目录…" else "浏览社区模型目录") }
+        CodexSettings(model, selected)
     }
     edit?.let { account ->
         AccountDialog(model, account, accounts.orEmpty().any { it.id == account.id }) { edit = null }
+    }
+    catalog?.let { source ->
+        CatalogDialog(source, dismiss = { catalog = null }) { provider, modelId ->
+            edit = ProviderAccount(newId(), provider.name, provider.baseUrl, ModelProtocol.Chat, modelId, "", enabled = false)
+            catalog = null
+        }
     }
     if (showUsage) AlertDialog(
         onDismissRequest = { showUsage = false }, title = { Text("使用统计") },
@@ -74,6 +92,39 @@ internal fun ProviderSettings(model: WriterModel) {
             }
         },
         confirmButton = { TextButton(onClick = { showUsage = false }) { Text("关闭") } }
+    )
+}
+
+@Composable
+private fun CatalogDialog(
+    catalog: CommunityCatalog, dismiss: () -> Unit, selected: (CommunityCatalogProvider, String) -> Unit
+) {
+    var provider by remember { mutableStateOf<CommunityCatalogProvider?>(null) }
+    var query by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = dismiss, title = { Text(provider?.name ?: "社区模型目录") },
+        text = {
+            Column {
+                OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索") })
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    val source = provider
+                    if (source == null) {
+                        catalog.providers.filter { it.name.contains(query, ignoreCase = true) || it.id.contains(query, true) }
+                            .take(60).forEach { item ->
+                                TextButton(onClick = { provider = item; query = "" }) { Text(item.name) }
+                            }
+                    } else {
+                        source.models.filter { it.displayName.contains(query, true) || it.modelId.contains(query, true) }
+                            .take(60).forEach { item ->
+                                TextButton(onClick = { selected(source, item.modelId) }) { Text(item.displayName) }
+                            }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { if (provider != null) { provider = null; query = "" } else dismiss() }) {
+            Text(if (provider != null) "返回供应商" else "关闭")
+        } }
     )
 }
 

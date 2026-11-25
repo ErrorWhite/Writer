@@ -24,14 +24,32 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
+import org.commonmark.ext.gfm.strikethrough.Strikethrough
+import org.commonmark.ext.gfm.tables.TableBlock
+import org.commonmark.ext.gfm.tables.TableHead
+import org.commonmark.ext.gfm.tables.TableBody
+import org.commonmark.ext.gfm.tables.TableRow
+import org.commonmark.ext.gfm.tables.TableCell
 import org.commonmark.ext.gfm.tables.TablesExtension
+import org.commonmark.ext.task.list.items.TaskListItemMarker
 import org.commonmark.ext.task.list.items.TaskListItemsExtension
+import org.commonmark.node.BlockQuote
+import org.commonmark.node.BulletList
+import org.commonmark.node.Code
+import org.commonmark.node.Emphasis
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.Heading
+import org.commonmark.node.HardLineBreak
+import org.commonmark.node.HtmlBlock
+import org.commonmark.node.HtmlInline
 import org.commonmark.node.Image
+import org.commonmark.node.IndentedCodeBlock
 import org.commonmark.node.Link
+import org.commonmark.node.ListItem
 import org.commonmark.node.Node
 import org.commonmark.node.OrderedList
+import org.commonmark.node.StrongEmphasis
+import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.text.TextContentRenderer
 import org.json.JSONArray
@@ -49,15 +67,9 @@ internal enum class WritingIntent(val label: String, val instruction: String) {
     Close("定稿交接", """只返回 JSON {"recap":"已发生剧情","bridge":"下章必接铺垫","lessons":[{"kind":"keep","text":"经验"}],"directions":[{"title":"走向","detail":"推进建议"}],"threads":[{"title":"线索","quote":"逐字原文","note":"待解问题"}],"relations":[{"from":"人物","to":"人物","label":"关系变化","quote":"包含两个人名的原文"}],"events":[{"title":"事件","quote":"逐字原文","note":"事实说明"}],"links":[{"from":"本章事件标题或以往事件 id","to":"本章事件标题","label":"因果关系","quote":"明确因果的逐字原文"}]}。逐字引用当前章原文，证据不足时返回空数组，推演只写在备选走向。""")
 }
 
-private val writingExtensions = listOf(TablesExtension.create(), StrikethroughExtension.create(), TaskListItemsExtension.create())
+internal val writingExtensions = listOf(TablesExtension.create(), StrikethroughExtension.create(), TaskListItemsExtension.create())
 private val writingParser = Parser.builder().extensions(writingExtensions).build()
 private val plainRenderer = TextContentRenderer.builder().build()
-private val structureNames = setOf(
-    "StrongEmphasis", "Emphasis", "Strikethrough", "Code", "Heading", "FencedCodeBlock",
-    "IndentedCodeBlock", "BulletList", "OrderedList", "ListItem", "TaskListItemMarker",
-    "BlockQuote", "TableBlock", "TableHead", "TableBody", "TableRow", "TableCell", "Link",
-    "Image", "ThematicBreak", "HardLineBreak", "HtmlBlock", "HtmlInline"
-)
 
 internal fun safeRevision(before: String, after: String): Boolean {
     if (after.isBlank()) return false
@@ -76,18 +88,34 @@ internal fun safeRevision(before: String, after: String): Boolean {
 }
 
 private fun markerShape(node: Node): List<String> {
-    val name = node.javaClass.simpleName
     val children = generateSequence(node.firstChild) { it.next }.flatMap { markerShape(it).asSequence() }.toList()
-    if (name !in structureNames) return children
-    val attribute = when (node) {
-        is Heading -> node.level.toString()
-        is OrderedList -> node.markerStartNumber.toString()
-        is FencedCodeBlock -> node.info.orEmpty().trim()
-        is Link -> node.destination + "|" + node.title
-        is Image -> node.destination + "|" + node.title
-        else -> node.toString().substringAfter(name)
+    val type = when (node) {
+        is StrongEmphasis -> "strong"
+        is Emphasis -> "emphasis"
+        is Strikethrough -> "deleted"
+        is Code -> "inline-code"
+        is Heading -> "heading:${node.level}"
+        is OrderedList -> "ordered:${node.markerStartNumber}"
+        is BulletList -> "list"
+        is ListItem -> "item"
+        is TaskListItemMarker -> "task:${node.isChecked}"
+        is FencedCodeBlock -> "fence:${node.info.orEmpty().trim()}"
+        is IndentedCodeBlock -> "indented-code"
+        is BlockQuote -> "quote"
+        is TableBlock -> "table"
+        is TableHead -> "table-head"
+        is TableBody -> "table-body"
+        is TableRow -> "table-row"
+        is TableCell -> "table-cell:${node.alignment}"
+        is Link -> "link:${node.destination}|${node.title}"
+        is Image -> "image:${node.destination}|${node.title}"
+        is ThematicBreak -> "rule"
+        is HardLineBreak -> "break"
+        is HtmlBlock -> "html-block"
+        is HtmlInline -> "html-inline:${node.literal}"
+        else -> return children
     }
-    return listOf("$name($attribute)") + children + "/$name"
+    return listOf(type) + children + "/$type"
 }
 
 internal fun writingContext(
@@ -349,7 +377,7 @@ internal fun WritingAiDialog(
                     review.records("items").forEach { item ->
                         val id = item.string("id")
                         Row {
-                            io.github.suqi8.coui.kmp.basic.Checkbox(id in selected, {
+                            Checkbox(id in selected, {
                                 selected = if (it) selected + id else selected - id
                             })
                             Column {

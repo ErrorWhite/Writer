@@ -242,7 +242,7 @@ private fun ChoiceRow(items: List<Pair<String, String>>, selected: String, chang
 @Composable
 internal fun CheckOption(name: String, checked: Boolean, change: (Boolean) -> Unit) {
     Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        io.github.suqi8.coui.kmp.basic.Checkbox(checked, change)
+        Checkbox(checked, change)
         Text(name)
     }
 }

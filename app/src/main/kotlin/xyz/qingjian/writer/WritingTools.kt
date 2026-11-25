@@ -75,7 +75,7 @@ internal fun FindDialog(value: TextFieldValue, changed: (TextFieldValue) -> Unit
                 OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("查找") })
                 OutlinedTextField(replacement, { replacement = it }, label = { Text("替换为") })
                 Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    io.github.suqi8.coui.kmp.basic.Checkbox(matchCase, { matchCase = it })
+                    Checkbox(matchCase, { matchCase = it })
                     Text("区分大小写")
                 }
                 if (query.isNotBlank()) Text("$count 处匹配")

@@ -7,11 +7,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.TextField
+
+@Composable
+internal fun Checkbox(checked: Boolean, change: (Boolean) -> Unit) {
+    io.github.suqi8.coui.kmp.basic.Checkbox(
+        state = if (checked) ToggleableState.On else ToggleableState.Off,
+        onClick = { change(!checked) }
+    )
+}
 
 @Composable
 internal fun OutlinedButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
