@@ -224,7 +224,6 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                         }.onFailure { status = it.localizedMessage ?: "连接失败。" }
                     }
                 }) { Text("测试连接并拉取模型") }
-                if (status.isNotEmpty()) Text(status)
                 TextButton(onClick = { advanced = !advanced }) { Text("自定义请求头") }
                 if (advanced) OutlinedTextField(value.customHeaders, { value = value.copy(customHeaders = it) },
                     Modifier.fillMaxWidth(), minLines = 2, label = { Text("每行一个 名称: 值") })

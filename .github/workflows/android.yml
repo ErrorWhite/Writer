@@ -78,7 +78,10 @@ jobs:
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
-          gradle --no-daemon :app:connectedDebugAndroidTest
+          test_status=0
+          gradle --no-daemon :app:connectedDebugAndroidTest || test_status=$?
+          adb pull /sdcard/Download/qingjian-qa "$RUNNER_TEMP/qingjian-qa" || true
+          exit "$test_status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -86,6 +89,7 @@ jobs:
           path: |
             app/build/reports/androidTests/
             ${{ runner.temp }}/qingjian-emulator.log
+            ${{ runner.temp }}/qingjian-qa/
 
   signed:
     if: github.event_name == 'workflow_dispatch' && inputs.signed && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-native')

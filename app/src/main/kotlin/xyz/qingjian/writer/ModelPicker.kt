@@ -61,7 +61,7 @@ internal fun ModelPicker(model: WriterModel, modifier: Modifier = Modifier) {
         query = ""
         open = true
     }) {
-        Text(current?.model?.ifBlank { current.name } ?: "选择模型", maxLines = 1)
+        Text(current?.let { it.model.ifBlank { it.name } } ?: "选择模型", maxLines = 1)
     }
     if (!open) return
     val filtered = choices.filter { choice ->

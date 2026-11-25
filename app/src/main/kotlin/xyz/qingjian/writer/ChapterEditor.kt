@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
@@ -80,6 +83,8 @@ private fun ChapterBody(
     var sourceMode by rememberSaveable { mutableStateOf(false) }
     var active by remember { mutableStateOf<ActiveBlock?>(null) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var wasTyping by remember { mutableStateOf(false) }
     val viewport = rememberLazyListState(position.block, position.offset)
     val renderSource = active?.source ?: text
     val projection by produceState("" to emptyList<EditorBlock>(), renderSource) {
@@ -97,6 +102,13 @@ private fun ChapterBody(
         sourceMode = false
         editor = editor.copy(composition = null)
         keyboard?.hide()
+    }
+    LaunchedEffect(keyboardVisible) {
+        if (keyboardVisible) wasTyping = true
+        else if (wasTyping) {
+            wasTyping = false
+            if (active != null) finishEditing()
+        }
     }
     val undo = remember { ArrayDeque<TextFieldValue>() }
     val redo = remember { ArrayDeque<TextFieldValue>() }

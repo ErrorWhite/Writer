@@ -17,6 +17,34 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class WritingFlowTest {
     @Test
+    fun providersHaveASeparateDetailPageAndModelTab() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().clear().commit()
+        val account = ProviderAccount(
+            "qa-model-account", "验收用供应商", "https://model.example.test/v1",
+            ModelProtocol.Responses, "fixture-model", "synthetic-key"
+        )
+        runBlocking { ProviderVault(context).save(listOf(account)) }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            requireNotNull(device.wait(Until.findObject(By.desc("设置")), 15_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("模型供应商")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("验收用供应商")), 10_000))
+            screenshot(device, "providers")
+            requireNotNull(device.wait(Until.findObject(By.text("编辑")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("HTTPS API 地址")), 10_000))
+            screenshot(device, "provider-connection")
+            requireNotNull(device.wait(Until.findObject(By.text("模型")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("模型 ID")), 10_000))
+            requireNotNull(device.wait(Until.findObject(By.text("fixture-model")), 10_000))
+            screenshot(device, "provider-models")
+            device.pressBack()
+            requireNotNull(device.wait(Until.findObject(By.text("验收用供应商")), 10_000))
+        }
+    }
+
+    @Test
     fun writeInTheReadingPageReturnFromTheDeskAndResumeTheBook() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -44,6 +72,7 @@ class WritingFlowTest {
                     }
                 }
             }
+            screenshot(device, "chapter")
             requireNotNull(device.wait(Until.findObject(By.desc("工作台")), 10_000)).click()
             device.wait(Until.hasObject(By.text("工作台")), 10_000)
             device.pressBack()
@@ -55,5 +84,10 @@ class WritingFlowTest {
             val persisted = runBlocking { library.export(bookId) }
             assertEquals(chapterId, persisted.string("activeId"))
         }
+    }
+
+    private fun screenshot(device: UiDevice, name: String) {
+        device.executeShellCommand("mkdir -p /sdcard/Download/qingjian-qa")
+        device.executeShellCommand("screencap -p /sdcard/Download/qingjian-qa/$name.png")
     }
 }
