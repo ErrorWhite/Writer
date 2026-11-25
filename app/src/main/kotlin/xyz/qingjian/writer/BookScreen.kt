@@ -49,6 +49,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 private enum class BookPage(val label: String, val icon: ImageVector) {
@@ -137,6 +140,11 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
     var movingChapter by rememberSaveable { mutableStateOf<String?>(null) }
     var deletingChapter by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
+    val term = query.trim()
+    val matches by remember(book.id, term) {
+        if (term.isEmpty()) flowOf(emptyList()) else model.library.searchChapters(book.id, term)
+    }.collectAsStateWithLifecycle(initialValue = emptyList())
+    val found = remember(matches) { matches.toSet() }
     LazyColumn(modifier, contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -145,8 +153,11 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
             }
         }
         item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
-            label = { Text("查找章节") }) }
+            label = { Text("搜索目录与正文") }) }
+        if (term.isNotEmpty() && found.isEmpty()) item { Text("没有匹配的章节") }
         volumes.forEach { volume ->
+            val visible = byVolume[volume.id].orEmpty().filter { term.isEmpty() || it.id in found }
+            if (term.isNotEmpty() && visible.isEmpty()) return@forEach
             item(key = "volume:${volume.id}") {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(volume.title, Modifier.weight(1f), style = WriterTheme.typography.titleLarge)
@@ -169,11 +180,25 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
                     }
                 }
             }
-            items(byVolume[volume.id].orEmpty().filter { it.title.contains(query.trim(), ignoreCase = true) },
+            items(visible,
                 key = { "chapter:${it.id}" }) { chapter ->
                 val selected = chapter.id == book.activeId
                 Surface(
-                    onClick = { model.perform { select(book.id, chapter.id); opened() } },
+                    onClick = { model.perform {
+                        if (term.isNotEmpty()) {
+                            val body = chapterText(book.id, chapter.id)
+                            val start = body.indexOf(term, ignoreCase = true)
+                            if (start >= 0) {
+                                val block = withContext(Dispatchers.Default) {
+                                    editorBlocks(body).indexOfFirst { start in it.start until it.end }
+                                }
+                                model.saveWritingPosition(DraftKey(book.id, chapter.id),
+                                    WritingPosition(start, start + term.length, block.coerceAtLeast(0), 0))
+                            }
+                        }
+                        select(book.id, chapter.id)
+                        opened()
+                    } },
                     color = if (selected) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
                     shape = WriterTheme.shapes.medium
                 ) {

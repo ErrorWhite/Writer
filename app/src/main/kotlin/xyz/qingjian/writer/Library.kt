@@ -147,6 +147,9 @@ internal interface LibraryDao {
     @Query("SELECT id, volumeId, title, complete FROM chapters WHERE bookId = :id ORDER BY position")
     fun observeDirectory(id: String): Flow<List<ChapterEntry>>
 
+    @Query("SELECT id FROM chapters WHERE bookId = :id AND (instr(lower(title), lower(:query)) > 0 OR instr(lower(text), lower(:query)) > 0)")
+    fun searchChapters(id: String, query: String): Flow<List<String>>
+
     @Query("SELECT chapters.id, chapters.title, chapters.volumeId, chapters.payload FROM chapters JOIN volumes ON chapters.bookId = volumes.bookId AND chapters.volumeId = volumes.id WHERE chapters.bookId = :id AND complete = 1 ORDER BY volumes.position, chapters.position")
     fun observeStory(id: String): Flow<List<ChapterStory>>
 
@@ -230,6 +233,7 @@ internal class Library(context: Context) {
     fun book(id: String) = dao.observeBook(id)
     fun volumes(id: String) = dao.observeVolumes(id)
     fun directory(id: String) = dao.observeDirectory(id)
+    fun searchChapters(id: String, query: String) = dao.searchChapters(id, query)
     fun story(id: String) = dao.observeStory(id)
     fun chapter(bookId: String, chapterId: String) = dao.observeChapter(bookId, chapterId)
     fun versions(bookId: String, chapterId: String) = dao.versions(bookId, chapterId)
@@ -302,6 +306,8 @@ internal class Library(context: Context) {
     }
 
     suspend fun hasBook(id: String) = dao.book(id) != null
+
+    suspend fun chapterText(bookId: String, chapterId: String) = dao.chapter(bookId, chapterId)?.text.orEmpty()
 
     suspend fun stageEdit(bookId: String, chapterId: String, text: String) = write {
         dao.stage(JournalEntry(bookId, chapterId, text))

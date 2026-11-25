@@ -1,0 +1,7 @@
+Qingjian incorporates adaptations from Orison Space by its contributors.
+Source: https://github.com/LumenStorm/OrisonSpace/tree/f1ce8a51bc258f95f5fac60a6fbf6fa34b84f983
+License: Apache License, Version 2.0 (orison/LICENSE in source).
+
+Qingjian adapts the Git history and tree-diff routines, Markdown parser
+configuration, and asset-library grouping workflow to its own book format,
+Vue interface, and local server. These files have been modified.

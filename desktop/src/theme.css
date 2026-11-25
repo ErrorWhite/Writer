@@ -1,0 +1,86 @@
+:root {
+  --accent: #3d62df;
+  --accent-on: #fff;
+  --accent-hue: 226;
+  --theme-paper: #fff;
+  --theme-neutral: #f5f6f8;
+  --theme-canvas: color-mix(in srgb, var(--accent) 4%, var(--theme-neutral));
+  --theme-surface: color-mix(in srgb, var(--accent) 3%, var(--theme-paper));
+  --theme-tint: color-mix(in srgb, var(--accent) 8%, var(--theme-paper));
+  --theme-selection: color-mix(in srgb, var(--accent) 13%, var(--theme-paper));
+  --theme-line: color-mix(in srgb, var(--accent) 13%, #eceef1);
+  --theme-border: color-mix(in srgb, var(--accent) 27%, var(--theme-paper));
+  --theme-focus: color-mix(in srgb, var(--accent) 78%, var(--theme-paper));
+  --theme-muted: color-mix(in srgb, var(--accent) 21%, #465061);
+  --theme-ink: color-mix(in srgb, var(--accent) 13%, #222a39);
+  --blue: color-mix(in srgb, var(--accent) 64%, #202937);
+  --blue-strong: color-mix(in srgb, var(--accent) 55%, #131925);
+  --ink: var(--theme-ink);
+  --muted: var(--theme-muted);
+  --soft: color-mix(in srgb, var(--theme-muted) 82%, #7d8695);
+  --line: var(--theme-line);
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--accent) 70%, var(--theme-paper));
+  --el-color-primary-light-5: color-mix(in srgb, var(--accent) 50%, var(--theme-paper));
+  --el-color-primary-light-7: color-mix(in srgb, var(--accent) 30%, var(--theme-paper));
+  --el-color-primary-light-8: color-mix(in srgb, var(--accent) 20%, var(--theme-paper));
+  --el-color-primary-light-9: var(--theme-tint);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--accent) 80%, #10161e);
+  --el-bg-color-page: var(--theme-canvas);
+  --el-fill-color-light: var(--theme-surface);
+  --el-border-color: var(--theme-line);
+  --el-border-color-light: var(--theme-line);
+  --el-text-color-regular: var(--theme-muted);
+  --el-text-color-primary: var(--ink);
+  --el-text-color-placeholder: var(--soft);
+  --terminal-base: color-mix(in srgb, var(--accent) 12%, #111722);
+  --terminal-header: color-mix(in srgb, var(--accent) 21%, #151d2a);
+  --terminal-line: color-mix(in srgb, var(--accent) 49%, #303946);
+  --terminal-ink: color-mix(in srgb, var(--accent) 21%, #f4f7fa);
+  --terminal-accent: color-mix(in srgb, var(--accent) 55%, #e5f1ff);
+  color: var(--ink);
+  background: var(--theme-canvas);
+}
+:root.dark {
+  --theme-paper: #1b2230;
+  --theme-neutral: #141923;
+  --theme-line: color-mix(in srgb, var(--accent) 21%, #313945);
+  --theme-border: color-mix(in srgb, var(--accent) 64%, #353e4b);
+  --theme-focus: color-mix(in srgb, var(--accent) 65%, #e8eef9);
+  --theme-muted: color-mix(in srgb, var(--accent) 21%, #c8cdd7);
+  --theme-ink: color-mix(in srgb, var(--accent) 13%, #eff1f6);
+  --blue: color-mix(in srgb, var(--accent) 43%, #f1f3fa);
+  --blue-strong: color-mix(in srgb, var(--accent) 35%, #f6f7fb);
+  --night-canvas: var(--theme-canvas);
+  --night-panel: var(--theme-paper);
+  --night-card: color-mix(in srgb, var(--accent) 8%, #222a36);
+  --night-selection: color-mix(in srgb, var(--accent) 24%, #202735);
+  --theme-tint: var(--night-selection);
+  --theme-selection: color-mix(in srgb, var(--accent) 33%, #232b38);
+  --ink: var(--theme-ink);
+  --muted: var(--theme-muted);
+  --soft: color-mix(in srgb, var(--theme-muted) 85%, #b8bec8);
+  --line: var(--theme-line);
+  --el-color-primary: var(--accent);
+  --el-color-primary-light-3: color-mix(in srgb, var(--accent) 70%, var(--theme-paper));
+  --el-color-primary-light-5: color-mix(in srgb, var(--accent) 50%, var(--theme-paper));
+  --el-color-primary-light-7: color-mix(in srgb, var(--accent) 30%, var(--theme-paper));
+  --el-color-primary-light-8: color-mix(in srgb, var(--accent) 20%, var(--theme-paper));
+  --el-color-primary-light-9: var(--theme-tint);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--accent) 80%, #10161e);
+  --el-border-color: var(--theme-border);
+  --el-border-color-light: var(--theme-line);
+  --el-fill-color-light: var(--theme-surface);
+  --el-text-color-primary: var(--ink);
+  --el-text-color-regular: var(--theme-muted);
+}
+.el-button--primary:not(.is-link, .is-text, .is-plain) {
+  --el-button-text-color: var(--accent-on);
+  --el-button-hover-text-color: var(--accent-on);
+  --el-button-active-text-color: var(--accent-on);
+}
+.el-button--primary:not(.is-link, .is-text, .is-plain):not(.is-disabled):hover {
+  --el-button-hover-bg-color: var(--el-color-primary-dark-2);
+  --el-button-hover-border-color: var(--el-color-primary-dark-2);
+}
+::selection { background: var(--theme-selection); color: var(--ink); }

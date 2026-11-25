@@ -1,0 +1,56 @@
+@font-face {
+  font-family: "Source Han Serif";
+  src: url("./fonts/SourceHanSerifCN-VF.woff2") format("woff2");
+  font-weight: 250 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --title-font: "Source Han Serif", "Source Han Serif SC", "Noto Serif SC", "Songti SC", SimSun, serif;
+  --page-width: 1180px;
+  --page-gutter: clamp(16px, 4vw, 42px);
+  --page-spacing: clamp(20px, 3.5vw, 36px);
+}
+
+:is(h1, h2, h3, h4, h5, h6, .brand-name, .el-dialog__title, .el-message-box__title),
+.shelf-book-info > strong,
+.resource-record-title > strong,
+.resource-record > strong,
+.skill-row > div > strong {
+  font-family: var(--title-font);
+}
+
+.el-dialog__title, .el-message-box__title { font-weight: 650; }
+.el-dialog__header { margin-bottom: 8px; }
+
+:is(.bookshelf-page, .research-library) { scrollbar-gutter: stable both-edges; }
+.page-frame {
+  width: min(var(--page-width), 100%);
+  margin-inline: auto;
+  padding: var(--page-spacing) var(--page-gutter) 40px;
+}
+.page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 47px;
+  margin-bottom: 22px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--theme-line);
+}
+.page-heading h1 {
+  flex: none;
+  font-size: clamp(23px, 2.55vw, 31px);
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: .02em;
+  color: var(--theme-ink);
+  white-space: nowrap;
+}
+.shelf-book-info > strong { font-weight: 650; }
+
+@media (max-width: 560px) {
+  .page-heading { gap: 10px; padding-bottom: 12px; margin-bottom: 16px; }
+}

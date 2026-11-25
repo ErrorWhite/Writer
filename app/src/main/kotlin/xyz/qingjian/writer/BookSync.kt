@@ -150,7 +150,8 @@ internal class BookSync(
                 }
                 library.store(incoming, if (local == null) null else id)
             }
-            link.copy(revision = remote.revision, digest = checkNotNull(incomingDigest)).also { saveLink(id, it) }
+            val storedDigest = if (localDigest == incomingDigest) checkNotNull(localDigest) else bookDigest(library.export(id))
+            link.copy(revision = remote.revision, digest = storedDigest).also { saveLink(id, it) }
         }
 
     private suspend fun preserveConflict(id: String, book: JSONObject, revision: String) {

@@ -1,0 +1,78 @@
+:root.dark {
+  color-scheme: dark;
+  --night-green: #95d7b8;
+  --night-red: #f4a5ab;
+  --night-amber: #e7b592;
+  --el-bg-color: var(--night-panel);
+  --el-bg-color-page: var(--night-canvas);
+  --el-bg-color-overlay: var(--night-card);
+  --el-fill-color-blank: var(--night-panel);
+}
+
+.dark * { scrollbar-color: var(--theme-border) transparent; }
+.dark :is(.bookshelf-page, .writing) { background: var(--night-canvas); }
+.dark :is(.topbar, .navigation, .assistant, .shelf-book, .editor-toolbar, .editor-footer, .paper-options button,
+  .resource-tabs button, .paragraph-diff > div, .graph-scroll) { background: var(--night-panel); }
+
+.dark :is(.shelf-book:hover, .book-card, .goal-card, .composer-input,
+  .resource-record, .resource-note, .original-block, .chapter-plan, .cover-editor-preview) {
+  background: var(--night-card);
+}
+.dark :is(.shelf-book, .book-card, .goal-card, .composer-input,
+  .chapter-plan, .paragraph-diff > div, .original-block, .ai-mode-toggle,
+  .ai-account-list li, .codex-account, .book-versions) { border-color: var(--line); }
+.dark :is(.brand-name, .chapter-heading h2, .footer-count strong,
+  .assistant-target h3, .profile-form h3, .chapter-plan h3) { color: var(--ink); }
+.dark :is(.current-book, .current-book svg, .icon-button, .toolbar-button, .chapter-button, .chapter-button > svg, .volume-button,
+  .section-tabs button, .chapter-details, .goal-heading, .goal-numbers, .editor-footer,
+  .field-stack, .candidate-variants, .paragraph-diff strong, .original-block strong,
+  .anchor-list li > span, .tool-button, .scope-row > span, .attachment-type) { color: var(--muted); }
+
+.dark :is(.icon-button, .toolbar-button, .chapter-button, .volume-button, .resource-tabs button):hover:not(:disabled),
+.dark :is(.brand-home:hover, .save-state:hover, .shelf-book:hover, .chapter-row:hover, .chapter-row:focus-within, .tool-button:hover,
+  .new-chapter-button.el-button:hover, .new-volume-button.el-button:hover, .paper-options button:hover,
+  .paragraph-tools button:hover, .text-action:hover:not(:disabled), .editor-width-handle:hover, .editor-width-handle.dragging) {
+  background: var(--night-selection);
+}
+.dark :is(.chapter-button.current, .chapter-row.current-row, .toolbar-active, .resource-tabs button[aria-pressed="true"],
+  .paper-options button.selected, .revision-paragraph.selected, .revision-paragraph.has-candidate, .device-login, .chapter-status,
+  .new-chapter-button.el-button, .goal-card .el-progress-bar__outer,
+  .plan-steps .current, .paragraph-tools button[aria-pressed="true"], .revision-label, .paragraph-badge) {
+  background: var(--night-selection);
+  border-color: var(--theme-border);
+  color: var(--blue-strong);
+}
+.dark :is(.chapter-row .chapter-button.current) { background: transparent; }
+.dark :is(.chapter-button.current > svg, .current-row .chapter-button, .current-row .chapter-button > svg,
+  .section-tabs button.selected, .add-chapter-link, .shelf-current, .goal-numbers strong, .goal-numbers > span:last-child,
+  .banner-label, .tool-button svg, .ai-mode-status, .paragraph-tools button, .text-action,
+  .account-form-footer a, .codex-settings summary, .device-login a) { color: var(--blue-strong); }
+.dark :is(.save-state, .save-state svg, .backup-result) { color: var(--night-green); }
+.dark :is(.save-pending, .save-pending svg) { color: var(--muted); }
+.dark :is(.save-error, .save-error svg, .backup-result.local, .backup-result.failed, .backup-result.server) { color: var(--night-amber); }
+.dark :is(.field-error, .text-action.danger, .delete-chapter-item.el-dropdown-menu__item:not(.is-disabled)) { color: var(--night-red); }
+.dark :is(.chapter-status.complete, .revision-label.approved, .edited-label, .paragraph-badge.foreshadow, .paragraph-diff ins) {
+  color: var(--night-green);
+  background: #253f38;
+  border-color: #426b5e;
+}
+.dark .paragraph-badge.prompt { color: var(--blue-strong); background: var(--theme-selection); }
+.dark :is(.paragraph-diff del, .ai-error) { color: var(--night-red); background: #4a2d38; }
+
+.dark .paper-scroll { background: radial-gradient(ellipse at 51% 0%, var(--night-card), var(--night-canvas) 72%); }
+.dark .paper { --paper-surface: var(--night-panel); background: var(--paper-surface); border-color: var(--line); box-shadow: 0 12px 38px #0b101e52; }
+.dark .paper-cream { --paper-surface: #282525; }
+.dark .paper-blue { --paper-surface: #1e2a3a; }
+.dark :is(.manuscript-editor, .paragraph-hit, .paragraph-diff p, .original-block p) { color: var(--ink); }
+.dark .manuscript-editor { caret-color: var(--blue-strong); }
+.dark .manuscript-editor::placeholder { color: var(--soft); }
+.dark :is(.paper-rule, .detail-divider, .toolbar-divider) { background: var(--line); }
+.dark .scene-divider { color: var(--theme-muted); }
+.dark .scene-divider-line.scene-divider-line:only-child { background: var(--theme-border); }
+.dark .chapter-search-row .el-input { --el-input-bg-color: var(--night-canvas); }
+.dark :is(.paragraph-tools, .candidate-tools) { border-top-color: var(--line); }
+
+.dark :is(.plan-steps span, .scope-row .el-radio-group) { background: var(--night-canvas); }
+.dark .scope-row .el-radio-button__inner { color: var(--soft); }
+.dark .scope-row .el-radio-button.is-active .el-radio-button__inner { color: var(--blue-strong); background: var(--night-selection); }
+.dark .composer-input .el-button.is-disabled { color: var(--soft); background: var(--night-card); border-color: var(--line); }

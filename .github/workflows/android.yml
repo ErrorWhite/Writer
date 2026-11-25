@@ -46,9 +46,49 @@ jobs:
             app/build/reports/lint-results-debug.*
           if-no-files-found: ignore
 
+  writing-flow:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.9.2'
+      - name: Run native writing flow on an Android emulator
+        shell: bash
+        run: |
+          sdkmanager --channel=3 'platform-tools' 'platforms;android-37.2' 'build-tools;37.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+          printf 'no\n' | avdmanager create avd -n qingjian-ci -k 'system-images;android-35;google_apis;x86_64'
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -avd qingjian-ci -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/qingjian-emulator.log" 2>&1 &
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 2; done'
+          adb shell wm size 1080x2340
+          adb shell wm density 480
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          gradle --no-daemon :app:connectedDebugAndroidTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Qingjian-Android-writing-flow
+          path: |
+            app/build/reports/androidTests/
+            ${{ runner.temp }}/qingjian-emulator.log
+
   signed:
     if: github.event_name == 'workflow_dispatch' && inputs.signed && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/android-native')
-    needs: check
+    needs: [check, writing-flow]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
