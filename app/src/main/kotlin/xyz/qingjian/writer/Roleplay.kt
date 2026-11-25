@@ -172,3 +172,18 @@ internal fun importedWorldBook(source: JSONObject): List<JSONObject> {
             .put("recursionDelay", item.optInt("recursionDelay", item.optInt("delayUntilRecursion")).coerceIn(0, 3))
     }
 }
+// Eta keeps reply revisions separate from the original transcript. Keep the
+// selected text in the PC-compatible field and carry alternatives on the same ID.
+internal fun reviseRoleplayReply(message: JSONObject, reply: String) {
+    val existing = message.array("replyAlternatives")
+    if (existing.length() == 0) existing.put(message.string("text"))
+    existing.put(reply)
+    message.put("replyAlternatives", existing)
+    selectRoleplayReply(message, existing.length() - 1)
+}
+
+internal fun selectRoleplayReply(message: JSONObject, index: Int) {
+    val alternatives = message.array("replyAlternatives")
+    if (index !in 0 until alternatives.length()) return
+    message.put("selectedReply", index).put("text", alternatives.getString(index))
+}

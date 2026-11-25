@@ -154,7 +154,7 @@ private fun RoleplayConversation(
     val runs by model.generations.collectAsStateWithLifecycle()
     val run = runs[runId]
     val running = run?.running == true
-    var responseRewrite by rememberSaveable(id) { mutableStateOf(false) }
+    var rewriteTarget by rememberSaveable(id) { mutableStateOf<String?>(null) }
     var input by rememberSaveable(id) { mutableStateOf("") }
     var limit by rememberSaveable(id) { mutableIntStateOf(30) }
     val messages = remember(session) { session.records("messages") }
@@ -162,11 +162,14 @@ private fun RoleplayConversation(
     var branching by remember { mutableStateOf<Int?>(null) }
 
     fun request(text: String?, rewrite: Boolean) {
-        responseRewrite = rewrite
+        val target = if (rewrite) messages.lastOrNull()?.takeIf { it.string("role") == "assistant" }?.string("id") else null
+        if (rewrite && target == null) return
+        rewriteTarget = target
         model.generate(runId, "文本扮演", prepare = {
             val snapshot = export(bookId)
             val thread = findSession(snapshot, id)
             val stored = thread.records("messages")
+            if (target != null) check(stored.lastOrNull()?.string("id") == target) { "会话内容已改变。" }
             val added = text?.let { roleplayMessage("user", it) }
             val inputMessages = if (rewrite) stored.dropLast(1) else stored + listOfNotNull(added)
             val prompt = roleplayPrompt(snapshot, findCard(snapshot, thread.string("cardId")), thread, inputMessages, rewrite)
@@ -178,8 +181,12 @@ private fun RoleplayConversation(
         }, accept = { reply ->
             mutateBook(bookId) { payload ->
                 val transcript = findSession(payload, id).array("messages")
-                if (rewrite) transcript.getJSONObject(transcript.length() - 1).put("text", reply)
-                else transcript.put(roleplayMessage("assistant", reply))
+                if (target == null) transcript.put(roleplayMessage("assistant", reply))
+                else {
+                    val last = transcript.optJSONObject(transcript.length() - 1)
+                    check(last?.string("id") == target) { "会话内容已改变。" }
+                    reviseRoleplayReply(checkNotNull(last), reply)
+                }
             }
         })
     }
@@ -203,7 +210,24 @@ private fun RoleplayConversation(
                         Text(if (user) session.string("userName", "玩家") else card.string("name"),
                             style = WriterTheme.typography.labelLarge)
                         Text(message.string("text"), style = WriterTheme.typography.bodyLarge)
-                        TextButton(enabled = !running, onClick = { branching = messages.indexOf(message) }) { Text("从此分支") }
+                        val alternatives = message.optJSONArray("replyAlternatives")?.length() ?: 0
+                        Row {
+                            if (alternatives > 1) {
+                                val index = message.optInt("selectedReply")
+                                for ((step, label) in listOf(-1 to "上一版", 1 to "下一版")) {
+                                    TextButton(enabled = !running && index + step in 0 until alternatives, onClick = {
+                                        model.perform {
+                                            mutateBook(bookId) {
+                                                findSession(it, id).records("messages").firstOrNull { entry ->
+                                                    entry.string("id") == message.string("id")
+                                                }?.let { entry -> selectRoleplayReply(entry, index + step) }
+                                            }
+                                        }
+                                    }) { Text(label) }
+                                }
+                            }
+                            TextButton(enabled = !running, onClick = { branching = messages.indexOf(message) }) { Text("从此分支") }
+                        }
                     }
                 }
             }
@@ -217,8 +241,10 @@ private fun RoleplayConversation(
                             model.perform {
                                 mutateBook(bookId) {
                                     val transcript = findSession(it, id).array("messages")
-                                    if (responseRewrite && transcript.length() > 0) {
-                                        transcript.getJSONObject(transcript.length() - 1).put("text", partial.text)
+                                    if (rewriteTarget != null) {
+                                        val last = transcript.optJSONObject(transcript.length() - 1)
+                                        check(last?.string("id") == rewriteTarget) { "会话内容已改变。" }
+                                        reviseRoleplayReply(checkNotNull(last), partial.text)
                                     } else transcript.put(roleplayMessage("assistant", partial.text))
                                 }
                                 model.clearGeneration(runId)
@@ -231,18 +257,20 @@ private fun RoleplayConversation(
         if (run?.error != null) Text(run.error, color = WriterTheme.colorScheme.error)
         CurrentPlanNotice(model)
         if (running && partial == null) Text("角色正在回应…")
-        if (!running) OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
-            label = { Text("你要说的话") })
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             if (running) OutlinedButton(onClick = { model.stopGeneration(runId) }) { Text("停止") }
             else {
+                OutlinedTextField(input, { input = it }, Modifier.weight(1f), label = { Text("你要说的话") })
                 if (input.isNotBlank()) OutlinedButton(onClick = { request(input.trim(), false) }) { Text("发送") }
+            }
+        }
+        if (!running && input.isBlank()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (messages.lastOrNull()?.string("role") == "user") {
                     TextButton(onClick = { request(null, false) }) { Text("继续回复") }
                 } else if (messages.any { it.string("role") == "user" }) {
                     TextButton(onClick = { request(null, true) }) { Text("重写回复") }
                 }
-            }
         }
     }
     branching?.let { index ->

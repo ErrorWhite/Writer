@@ -59,9 +59,12 @@ internal fun Surface(
     modifier: Modifier = Modifier,
     shape: Shape = RectangleShape,
     color: Color = WriterTheme.colorScheme.surface,
+    contentColor: Color = WriterTheme.colorScheme.onSurface,
     content: @Composable () -> Unit
 ) {
-    Box(modifier.clip(shape).background(color)) { content() }
+    Box(modifier.clip(shape).background(color)) {
+        CompositionLocalProvider(LocalContentColor provides contentColor, content = content)
+    }
 }
 
 @Composable
@@ -70,9 +73,10 @@ internal fun Surface(
     modifier: Modifier = Modifier,
     shape: Shape = RectangleShape,
     color: Color = WriterTheme.colorScheme.surface,
+    contentColor: Color = WriterTheme.colorScheme.onSurface,
     content: @Composable () -> Unit
 ) {
-    Surface(modifier.clip(shape).clickable(onClick = onClick), shape, color, content)
+    Surface(modifier.clip(shape).clickable(onClick = onClick), shape, color, contentColor, content)
 }
 
 @Composable

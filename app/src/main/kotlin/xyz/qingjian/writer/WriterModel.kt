@@ -15,6 +15,7 @@ import java.util.Base64
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,7 +63,15 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     val notice = mutableNotice.asStateFlow()
     private val vault = ProviderVault(application)
     private val client = ModelClient()
-    private val studio = StudioServer(client)
+    private val studio = StudioServer(client, application, vault)
+    private val bookSync = BookSync(application, studio, library, lock, flush = { bookId ->
+        flush()
+        check(mutableDrafts.value.none { (key, draft) -> key.bookId == bookId && draft.state == SaveState.Failed }) {
+            "待同步的正文尚未保存到本机。"
+        }
+    }, notice = ::notice)
+    val syncedBooks = bookSync.enabled
+    val syncStatus = bookSync.status
     private val approvals = application.getSharedPreferences("skill_approvals", 0)
     private val plan = ChatGptPlan(application, vault, client)
     private val mutablePlanProfiles = MutableStateFlow<List<PlanProfile>>(emptyList())
@@ -96,6 +105,12 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     val usage = mutableUsage.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            while (true) {
+                delay(15_000)
+                bookSync.syncPending(studioEndpoint.value)
+            }
+        }
         viewModelScope.launch {
             lock.withLock {
                 try {
@@ -332,6 +347,29 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     fun listStudioBooks() = perform { mutableStudioBooks.value = studio.books(studioEndpoint.value) }
 
     fun closeStudioBooks() { mutableStudioBooks.value = null }
+
+    fun toggleBookSync(id: String) = syncAction {
+        if (syncedBooks.value.containsKey(id)) bookSync.disable(id)
+        else bookSync.enable(studioEndpoint.value, id)
+    }
+
+    fun openSyncedBook(id: String, opened: (String) -> Unit) = syncAction {
+        bookSync.import(studioEndpoint.value, id)
+        closeStudioBooks()
+        opened(id)
+    }
+
+    private fun syncAction(action: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                action()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                notice(error.localizedMessage ?: "操作失败。")
+            }
+        }
+    }
 
     fun previewStudioBook(id: String) = perform {
         val book = studio.book(studioEndpoint.value, id)
@@ -698,10 +736,13 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         notice("已还原 Git 版本")
     }
 
-    fun deleteBook(bookId: String, deleted: () -> Unit) = perform {
-        remove(bookId)
-        mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != bookId }
-        deleted()
+    fun deleteBook(bookId: String, deleted: () -> Unit) = syncAction {
+        bookSync.delete(bookId)
+        perform {
+            remove(bookId)
+            mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != bookId }
+            deleted()
+        }
     }
 
     private fun read(uri: Uri, limitMb: Int, errorMessage: String): ByteArray {

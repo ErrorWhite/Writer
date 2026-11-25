@@ -147,7 +147,13 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     if (entries.isEmpty()) Text("服务器没有作品")
                     entries.forEach { book ->
-                        TextButton(onClick = { model.previewStudioBook(book.id) }) { Text(book.title) }
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Text(book.title, style = WriterTheme.typography.titleMedium)
+                            Row {
+                                TextButton(onClick = { model.previewStudioBook(book.id) }) { Text("导入副本") }
+                                TextButton(onClick = { model.openSyncedBook(book.id, open) }) { Text("同步并打开") }
+                            }
+                        }
                     }
                 }
             },

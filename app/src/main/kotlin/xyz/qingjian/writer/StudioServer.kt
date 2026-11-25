@@ -1,5 +1,6 @@
 package xyz.qingjian.writer
 
+import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
 import okhttp3.Cookie
 import okhttp3.HttpUrl
@@ -10,8 +11,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal class StudioServer(private val client: ModelClient) {
+internal class StudioServer(
+    private val client: ModelClient, context: Context, private val vault: ProviderVault
+) {
     private val sessions = ConcurrentHashMap<String, Cookie>()
+    private val sessionStorage = context.getSharedPreferences("studio_sessions", Context.MODE_PRIVATE)
     private val json = "application/json".toMediaType()
 
     suspend fun signIn(endpoint: String, username: String, password: String) {
@@ -23,6 +27,8 @@ internal class StudioServer(private val client: ModelClient) {
                 .firstOrNull { it.name == "qingjian_novel_session" && it.secure && it.httpOnly }
             require(cookie != null) { "青简服务器没有返回有效的会话 Cookie。" }
             sessions[base.toString()] = cookie
+            val address = base.toString()
+            sessionStorage.edit().putString(address, vault.seal(cookie.toString(), address)).apply()
         }
     }
 
@@ -34,11 +40,12 @@ internal class StudioServer(private val client: ModelClient) {
             client.execute(request) { _, _ -> Unit }
         } finally {
             sessions.remove(base.toString())
+            sessionStorage.edit().remove(base.toString()).apply()
         }
     }
 
     fun connected(endpoint: String) = runCatching {
-        sessions[base(endpoint).toString()]?.expiresAt?.let { it > System.currentTimeMillis() } == true
+        cookie(base(endpoint))?.expiresAt?.let { it > System.currentTimeMillis() } == true
     }.getOrDefault(false)
 
     suspend fun status(endpoint: String): JSONObject = call(endpoint, "api/ai/accounts?check=codex")
@@ -64,6 +71,34 @@ internal class StudioServer(private val client: ModelClient) {
 
     suspend fun uploadCopy(endpoint: String, data: JSONObject): String =
         call(endpoint, "api/book/import", JSONObject().put("book", data)).getString("id")
+
+    suspend fun syncBook(endpoint: String, id: String, since: String? = null): StudioSyncResult {
+        val path = syncPath(id) + (since?.let { "&since=$it" } ?: "")
+        return syncResult(request(endpoint, path))
+    }
+
+    suspend fun writeSyncBook(
+        endpoint: String, id: String, revision: String?, operationId: String, book: JSONObject?
+    ): StudioSyncResult {
+        val body = JSONObject().put("baseRevision", revision ?: JSONObject.NULL).put("operationId", operationId)
+        if (book != null) body.put("book", book)
+        val outgoing = request(endpoint, syncPath(id)).newBuilder()
+            .method(if (book == null) "DELETE" else "PUT", body.toString().toRequestBody(json)).build()
+        return syncResult(outgoing)
+    }
+
+    private fun syncPath(id: String) = "api/sync/v1/book?id=" + java.net.URLEncoder.encode(id, Charsets.UTF_8.name())
+
+    private suspend fun syncResult(request: Request) =
+        client.execute(request, setOf(401, 404, 410, 412)) { response, _ ->
+            val data = requireNotNull(response.body).byteStream().use {
+                it.readLimited(64 * 1024 * 1024, "同步书稿超过大小限制。")
+            }
+            val result = runCatching { JSONObject(data.toString(Charsets.UTF_8)) }.getOrNull() ?: JSONObject()
+            StudioSyncResult(response.code, result.string("revision").ifEmpty { null },
+                result.optJSONObject("book"), result.optBoolean("unchanged"), result.optBoolean("managed"),
+                result.string("code"))
+        }
 
     suspend fun testSkill(endpoint: String, script: JSONObject, text: String): String {
         val result = call(endpoint, "api/skills/test", JSONObject().put("script", script)
@@ -163,7 +198,7 @@ internal class StudioServer(private val client: ModelClient) {
         return Request.Builder().url(url).header("Accept", "application/json").apply {
             header("Origin", "${base.scheme}://${base.encodedAuthority()}")
             if (authenticated) {
-                val cookie = sessions[base.toString()]
+                val cookie = cookie(base)
                 require(cookie != null && cookie.matches(url) && cookie.expiresAt > System.currentTimeMillis()) {
                     "请先登录青简服务器。"
                 }
@@ -178,9 +213,20 @@ internal class StudioServer(private val client: ModelClient) {
             "请输入青简部署的 HTTPS 地址。"
         }
     }
+
+    private fun cookie(base: HttpUrl): Cookie? {
+        val address = base.toString()
+        sessions[address]?.let { return it }
+        val sealed = sessionStorage.getString(address, null) ?: return null
+        return runCatching { Cookie.parse(base, vault.open(sealed, address)) }.getOrNull()?.also { sessions[address] = it }
+    }
 }
 
 internal data class StudioBook(val id: String, val title: String)
+internal data class StudioSyncResult(
+    val status: Int, val revision: String?, val book: JSONObject?, val unchanged: Boolean,
+    val managed: Boolean, val code: String
+)
 
 private fun HttpUrl.encodedAuthority() = if (port == 443) {
     if (host.contains(':')) "[$host]" else host

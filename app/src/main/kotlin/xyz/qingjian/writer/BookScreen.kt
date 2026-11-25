@@ -35,6 +35,7 @@ import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.Scaffold
 import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,10 @@ private enum class BookPage(val label: String, val icon: ImageVector) {
 @Composable
 internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
     val book by remember(id) { model.library.book(id) }.collectAsStateWithLifecycle(initialValue = null)
+    val synchronization by model.syncStatus.collectAsStateWithLifecycle()
+    LaunchedEffect(synchronization[id]) {
+        if (synchronization[id] == "服务器已删除书稿") back()
+    }
     val current = book ?: return
     val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val pages = rememberSaveableStateHolder()
@@ -247,6 +252,10 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
     var remove by rememberSaveable { mutableStateOf(false) }
     var upload by rememberSaveable { mutableStateOf(false) }
     val server by model.studioStatus.collectAsStateWithLifecycle()
+    val synced by model.syncedBooks.collectAsStateWithLifecycle()
+    val synchronization by model.syncStatus.collectAsStateWithLifecycle()
+    val isSynced = book.id in synced
+    var confirmSync by rememberSaveable { mutableStateOf(false) }
     val cover = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
         if (it != null) model.importCover(book.id, it)
     }
@@ -264,6 +273,12 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
             })
             if (server != null) DropdownMenuItem("备份副本到服务器",
                 onClick = { expanded = false; upload = true })
+            if (server != null || isSynced) DropdownMenuItem(
+                if (isSynced) "停止同步此书" else "开启跨端同步", onClick = {
+                    expanded = false
+                    if (isSynced) model.toggleBookSync(book.id) else confirmSync = true
+                })
+            if (isSynced) DropdownMenuItem(synchronization[book.id] ?: "等候同步", enabled = false, onClick = {})
             DropdownMenuItem("删除作品", onClick = { expanded = false; remove = true })
         }
     }
@@ -287,6 +302,12 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
         text = { Text("全书正文和书内资料会上传到已登录的青简服务器，并保存为独立作品。") },
         confirmButton = { TextButton(onClick = { model.uploadStudioCopy(book.id); upload = false }) { Text("上传副本") } },
         dismissButton = { TextButton(onClick = { upload = false }) { Text("取消") } }
+    )
+    if (confirmSync) AlertDialog(
+        onDismissRequest = { confirmSync = false }, title = { Text("开启跨端同步") },
+        text = { Text("当前书稿、附件和书内会话会与已登录的青简服务器同步。") },
+        confirmButton = { TextButton(onClick = { confirmSync = false; model.toggleBookSync(book.id) }) { Text("开启同步") } },
+        dismissButton = { TextButton(onClick = { confirmSync = false }) { Text("取消") } }
     )
 }
 

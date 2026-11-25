@@ -32,7 +32,11 @@ import org.json.JSONObject
 internal enum class ModelProtocol(val label: String, val route: String) {
     Responses("OpenAI Responses", "responses"),
     Chat("OpenAI Chat 兼容", "chat/completions"),
-    Anthropic("Anthropic Messages", "messages");
+    Anthropic("Anthropic Messages", "messages"),
+    Gemini("Gemini Interactions", "interactions"),
+    Vertex("Vertex AI Gemini", "");
+
+    val google get() = this == Gemini || this == Vertex
 }
 
 internal data class ProviderPreset(val name: String, val url: String, val protocol: ModelProtocol)
@@ -40,6 +44,8 @@ internal val providerPresets = listOf(
     ProviderPreset("OpenAI", "https://api.openai.com/v1", ModelProtocol.Responses),
     ProviderPreset("DeepSeek", "https://api.deepseek.com/v1", ModelProtocol.Chat),
     ProviderPreset("Anthropic", "https://api.anthropic.com/v1", ModelProtocol.Anthropic),
+    ProviderPreset("Google Gemini", "https://generativelanguage.googleapis.com/v1beta", ModelProtocol.Gemini),
+    ProviderPreset("Vertex AI", "https://aiplatform.googleapis.com/v1", ModelProtocol.Vertex),
     ProviderPreset("阿里百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1", ModelProtocol.Chat),
     ProviderPreset("OpenRouter", "https://openrouter.ai/api/v1", ModelProtocol.Chat),
     ProviderPreset("Kimi", "https://api.moonshot.cn/v1", ModelProtocol.Chat),
@@ -148,12 +154,20 @@ internal class ModelClient {
         }
     }
 
-    suspend fun models(account: ProviderAccount): List<String> = execute(request(account, "models").build()) { response, _ ->
+    suspend fun models(account: ProviderAccount): List<String> {
+        if (account.protocol == ModelProtocol.Vertex) {
+            generate(account.copy(enabled = true), "", listOf(ModelMessage("user", "Reply with OK.")), {})
+            return listOf(account.model)
+        }
+        return execute(request(account, "models").build()) { response, _ ->
         val body = requireNotNull(response.body).byteStream().use {
             it.readLimited(8 * 1024 * 1024, "模型列表超过 8 MB。")
         }
-        JSONObject(body.toString(Charsets.UTF_8)).records("data").map { it.string("id") }
+        val payload = JSONObject(body.toString(Charsets.UTF_8))
+        if (account.protocol == ModelProtocol.Gemini) payload.records("models").map { it.string("name").removePrefix("models/") }
+        else payload.records("data").map { it.string("id") }
             .filter(String::isNotBlank).distinct().sorted()
+        }
     }
 
     suspend fun generate(
@@ -165,6 +179,7 @@ internal class ModelClient {
         onUsage: (ModelUsage) -> Unit = {}
     ): String {
         require(account.enabled && account.key.isNotBlank() && account.model.isNotBlank()) { "请选择已启用的模型账号。" }
+        if (account.protocol.google) return generateGoogle(account, system, messages, onText, onReasoning, onUsage)
         val input = JSONArray(messages.map { JSONObject().put("role", it.role).put("content", it.content) })
         val body = JSONObject().put("model", account.model).put("stream", true)
         when (account.protocol) {
@@ -174,6 +189,7 @@ internal class ModelClient {
                 .apply { input.objects().forEach { put(it) } })
                 .put("stream_options", JSONObject().put("include_usage", true))
             ModelProtocol.Anthropic -> body.put("system", system).put("messages", input).put("max_tokens", 4096)
+            else -> error("协议选择无效。")
         }
         val outgoing = request(account, account.protocol.route)
             .header("Accept", "text/event-stream")
@@ -199,6 +215,7 @@ internal class ModelClient {
                     ModelProtocol.Responses -> if (type == "response.output_text.delta") frame.string("delta") else ""
                     ModelProtocol.Chat -> delta?.string("content").orEmpty()
                     ModelProtocol.Anthropic -> if (type == "content_block_delta") delta?.string("text").orEmpty() else ""
+                    else -> ""
                 }
                 val reasoning = when {
                     type == "response.reasoning_summary_text.delta" -> frame.string("delta")
@@ -231,15 +248,52 @@ internal class ModelClient {
         }
     }
 
+    private suspend fun generateGoogle(
+        account: ProviderAccount, system: String, messages: List<ModelMessage>, onText: (String) -> Unit,
+        onReasoning: (String) -> Unit, onUsage: (ModelUsage) -> Unit
+    ): String {
+        val body = googleRequest(account.protocol, account.model, system, messages)
+        val outgoing = if (account.protocol == ModelProtocol.Vertex) {
+            val base = account.url("models")
+            require("/publishers/google/models" in base.encodedPath && "/projects/" in base.encodedPath) {
+                "Vertex AI 地址须包含项目、地域和 /publishers/google。"
+            }
+            val model = account.model.removePrefix("models/")
+            require(model.matches(Regex("[A-Za-z0-9._-]+"))) { "Vertex AI 模型 ID 无效。" }
+            request(account, "models/$model:streamGenerateContent")
+                .url(base.newBuilder().addPathSegment("$model:streamGenerateContent").addQueryParameter("alt", "sse").build())
+        } else request(account, account.protocol.route)
+        return execute(outgoing.post(body.toString().toRequestBody(json)).build()) { response, active ->
+            val result = StringBuilder()
+            val decoder = GoogleStream(account.protocol, { value ->
+                check(result.length + value.length <= 1_500_000) { "供应商回复超过长度限制。" }
+                result.append(value)
+                onText(value)
+            }, onReasoning)
+            readProviderSse(requireNotNull(response.body).byteStream(), active) { _, data ->
+                if (data == "[DONE]") false else {
+                    decoder.accept(JSONObject(data))
+                    account.protocol != ModelProtocol.Gemini || !decoder.terminal
+                }
+            }
+            onUsage(decoder.usage)
+            check(decoder.terminal && result.isNotBlank()) { "模型生成提前中断，已收到的内容可保留为草稿。" }
+            result.toString()
+        }
+    }
+
     private fun request(account: ProviderAccount, path: String): Request.Builder =
         Request.Builder().url(account.url(path)).apply {
             if (account.protocol == ModelProtocol.Anthropic) {
                 header("x-api-key", account.key)
                 header("anthropic-version", "2023-06-01")
-            } else header("Authorization", "Bearer ${account.key}")
+            } else if (account.protocol == ModelProtocol.Gemini) header("x-goog-api-key", account.key)
+            else header("Authorization", "Bearer ${account.key}")
         }
 
-    internal suspend fun <T> execute(request: Request, read: (Response, () -> Unit) -> T): T =
+    internal suspend fun <T> execute(
+        request: Request, allowedStatuses: Set<Int> = emptySet(), read: (Response, () -> Unit) -> T
+    ): T =
         suspendCancellableCoroutine { continuation ->
             val call = http.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
@@ -251,7 +305,7 @@ internal class ModelClient {
                 override fun onResponse(call: Call, response: Response) {
                     try {
                         val result = response.use {
-                            check(it.isSuccessful) { modelHttpError(it.code) }
+                            check(it.isSuccessful || it.code in allowedStatuses) { modelHttpError(it.code) }
                             read(it) { if (!continuation.isActive) throw java.io.InterruptedIOException("请求已取消") }
                         }
                         if (continuation.isActive) continuation.resume(result)
