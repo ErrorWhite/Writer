@@ -7,11 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,16 +57,16 @@ internal fun GitTimeline(model: WriterModel, book: BookRow, dismiss: () -> Unit)
                 if (selected == null) {
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         timeline.heads.keys.ifEmpty { setOf("main") }.forEach { name ->
-                            FilterChip(name == branch, { branch = name }, label = { Text(name) })
+                            FilterChip(name == branch, { branch = name }, label = name)
                         }
                     }
                     if (timeline.commits.isEmpty()) Text("此书尚无 Git 提交。")
                     timeline.commits.forEach { item ->
                         TextButton(onClick = { selected = item.oid; expanded = null }) {
                             Column {
-                                Text(item.message, style = MaterialTheme.typography.titleMedium)
+                                Text(item.message, style = WriterTheme.typography.titleMedium)
                                 Text(DateFormat.getDateTimeInstance().format(Date(item.createdAt)) + " · " + item.oid.take(8),
-                                    style = MaterialTheme.typography.labelSmall)
+                                    style = WriterTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -88,10 +84,10 @@ internal fun GitTimeline(model: WriterModel, book: BookRow, dismiss: () -> Unit)
                         }
                         TextButton(onClick = { expanded = if (expanded == change.path) null else change.path }) { Text(label) }
                         if (expanded == change.path) {
-                            Text("上一版", style = MaterialTheme.typography.labelLarge)
+                            Text("上一版", style = WriterTheme.typography.labelLarge)
                             Text(change.before.ifBlank { "（空白）" },
                                 Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()))
-                            Text("本版", style = MaterialTheme.typography.labelLarge)
+                            Text("本版", style = WriterTheme.typography.labelLarge)
                             Text(change.after.ifBlank { "（空白）" },
                                 Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()))
                         }

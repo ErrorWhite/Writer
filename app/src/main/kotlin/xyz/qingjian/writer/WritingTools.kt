@@ -7,10 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,7 +93,7 @@ internal fun FindDialog(value: TextFieldValue, changed: (TextFieldValue) -> Unit
                     changed(TextFieldValue(text, TextRange(index + replacement.length)))
                 }) { Text("替换一处") }
                 TextButton(enabled = canLocate, onClick = { confirmAll = true }) {
-                    Text("全部替换", color = MaterialTheme.colorScheme.primary)
+                    Text("全部替换", color = WriterTheme.colorScheme.primary)
                 }
             }
         },

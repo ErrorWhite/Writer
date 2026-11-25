@@ -15,11 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,7 +86,7 @@ internal fun LibraryGraph(model: WriterModel, book: BookRow, back: () -> Unit) {
     }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         filtered.forEach { node ->
-            FilterChip(node.key == active.key, { selected = node.key }, label = { Text(node.title) })
+            FilterChip(node.key == active.key, { selected = node.key }, label = node.title)
         }
     }
     val neighbors = nodes.filter { it.key != active.key && (it.key in active.links || active.key in it.links) }.take(10)
@@ -98,7 +94,7 @@ internal fun LibraryGraph(model: WriterModel, book: BookRow, back: () -> Unit) {
         selected = it
         query = ""
     }
-    Text(active.title, style = MaterialTheme.typography.titleLarge)
+    Text(active.title, style = WriterTheme.typography.titleLarge)
     if (active.detail.isNotBlank()) Text(active.detail)
     if (active.chapter.isNotBlank()) TextButton(onClick = {
         model.perform { select(book.id, active.chapter); back() }
@@ -116,7 +112,7 @@ internal fun PlotGraph(events: List<JSONObject>, confirmed: List<JSONObject>, ch
         chronology.map { Triple(it.first, it.second, true) }
     NetworkGraph(nodes, links, central = false) { selected = it }
     nodes.firstOrNull { it.key == selected }?.let { Text(it.title + " · " + it.detail) }
-    Text("实线为已确认因果，虚线为章节顺序。", style = MaterialTheme.typography.bodySmall)
+    Text("实线为已确认因果，虚线为章节顺序。", style = WriterTheme.typography.bodySmall)
 }
 
 @Composable
@@ -124,7 +120,7 @@ private fun NetworkGraph(
     nodes: List<RelationNode>, edges: List<Triple<String, String, Boolean>>,
     central: Boolean, selected: (String) -> Unit
 ) {
-    val palette = MaterialTheme.colorScheme
+    val palette = WriterTheme.colorScheme
     val count = if (central) nodes.size - 1 else nodes.size
     val points = nodes.mapIndexed { index, node ->
         val order = if (central) index - 1 else index
@@ -132,7 +128,7 @@ private fun NetworkGraph(
         node.key to if (order < 0) Offset(.5f, .5f) else Offset(.5f + .35f * cos(angle).toFloat(),
             .5f + .35f * sin(angle).toFloat())
     }.toMap()
-    Surface(shape = MaterialTheme.shapes.large, color = palette.surfaceContainer) {
+    Surface(shape = WriterTheme.shapes.large, color = palette.surfaceContainer) {
         BoxWithConstraints(Modifier.fillMaxWidth().height(278.dp)) {
             val width = maxWidth
             val height = maxHeight
@@ -162,7 +158,7 @@ private fun NetworkGraph(
                 ) {
                     Box(Modifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.Center) {
                         Text(node.title, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelSmall)
+                            style = WriterTheme.typography.labelSmall)
                     }
                 }
             }

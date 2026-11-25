@@ -7,13 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,14 +33,14 @@ internal fun ProviderSettings(model: WriterModel) {
     var catalog by remember { mutableStateOf<CommunityCatalog?>(null) }
     var loadingCatalog by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("模型账号", style = MaterialTheme.typography.titleLarge)
+        Text("模型账号", style = WriterTheme.typography.titleLarge)
         accounts.orEmpty().forEach { account ->
-            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+            Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected == account.id, { model.useAccount(account.id) }, enabled = account.enabled)
                     Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                        Text(account.name, style = MaterialTheme.typography.titleMedium)
-                        Text(account.model, style = MaterialTheme.typography.bodySmall)
+                        Text(account.name, style = WriterTheme.typography.titleMedium)
+                        Text(account.model, style = WriterTheme.typography.bodySmall)
                     }
                     TextButton(onClick = { edit = account }) { Text("编辑") }
                 }
@@ -85,7 +79,7 @@ internal fun ProviderSettings(model: WriterModel) {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (usage.isEmpty()) Text("尚无模型用量记录")
                 usage.groupBy { it.day }.entries.toList().takeLast(30).asReversed().forEach { (day, rows) ->
-                    Text("$day · ${rows.size} 次", style = MaterialTheme.typography.titleMedium)
+                    Text("$day · ${rows.size} 次", style = WriterTheme.typography.titleMedium)
                     rows.groupBy { it.account to it.intent }.forEach { (key, entries) ->
                         fun sum(value: (UsageEntry) -> Int?): String =
                             entries.mapNotNull(value).takeIf { it.isNotEmpty() }?.sum()?.toString() ?: "未知"
@@ -150,7 +144,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                     TextButton(onClick = { presets = true }) { Text("选择供应商预设") }
                     DropdownMenu(presets, { presets = false }) {
                         providerPresets.forEach { preset ->
-                            DropdownMenuItem({ Text(preset.name) }, onClick = {
+                            DropdownMenuItem(preset.name, onClick = {
                                 value = value.copy(name = preset.name, endpoint = preset.url, protocol = preset.protocol, model = "")
                                 presets = false
                             })
@@ -162,7 +156,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 TextButton(onClick = { protocols = true }) { Text(value.protocol.label) }
                 DropdownMenu(protocols, { protocols = false }) {
                     ModelProtocol.entries.forEach { protocol ->
-                        DropdownMenuItem({ Text(protocol.label) }, onClick = {
+                        DropdownMenuItem(protocol.label, onClick = {
                             value = value.copy(protocol = protocol)
                             protocols = false
                         })
@@ -192,7 +186,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 }) { Text("测试连接并拉取模型") }
                 if (status.isNotEmpty()) Text(status)
                 if (exists) TextButton(onClick = { deleting = true }) {
-                    Text("删除账号", color = MaterialTheme.colorScheme.error)
+                    Text("删除账号", color = WriterTheme.colorScheme.error)
                 }
             }
         },

@@ -10,11 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,7 +40,7 @@ internal fun ChatGptPlanSettings(model: WriterModel, active: String?) {
     var disconnect by remember { mutableStateOf<PlanProfile?>(null) }
     var welcome by rememberSaveable { mutableStateOf(false) }
 
-    Text("ChatGPT 套餐", style = MaterialTheme.typography.titleLarge)
+    Text("ChatGPT 套餐", style = WriterTheme.typography.titleLarge)
     Text("授权后，符合条件的写作与文本扮演请求使用你自己的 ChatGPT 套餐配额。")
     Button(enabled = !busy, onClick = {
         model.signInPlan(browser = uri::openUri) {
@@ -61,18 +57,18 @@ internal fun ChatGptPlanSettings(model: WriterModel, active: String?) {
     }
     profiles.forEach { profile ->
         val current = active == "plan:${profile.id}"
-        Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+        Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(current, {
                     if (profile.model.isBlank()) select = profile else model.choosePlan(profile, profile.model)
                 }, enabled = profile.connected && !busy)
                 Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                    Text(profile.name, style = MaterialTheme.typography.titleMedium)
+                    Text(profile.name, style = WriterTheme.typography.titleMedium)
                     Text(when {
                         !profile.connected -> "需要授权"
                         current -> "正在使用 ChatGPT 套餐 · ${profile.model}"
                         else -> profile.model.ifBlank { "已授权 · 请选择模型" }
-                    }, style = MaterialTheme.typography.bodySmall)
+                    }, style = WriterTheme.typography.bodySmall)
                 }
                 TextButton(enabled = !busy, onClick = {
                     if (profile.connected) select = profile
@@ -112,7 +108,7 @@ internal fun CurrentPlanNotice(model: WriterModel) {
     if (active?.startsWith("plan:") != true) return
     val uri = LocalUriHandler.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("正在使用 ChatGPT 套餐", style = MaterialTheme.typography.labelMedium)
+        Text("正在使用 ChatGPT 套餐", style = WriterTheme.typography.labelMedium)
         TextButton(onClick = { uri.openUri(usageUrl) }) { Text("管理用量") }
     }
 }
@@ -135,7 +131,7 @@ private fun PlanModelPicker(model: WriterModel, profile: PlanProfile, dismiss: (
                 OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索套餐可用模型") })
                 val options = entries
                 when {
-                    error != null -> Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
+                    error != null -> Text(error.orEmpty(), color = WriterTheme.colorScheme.error)
                     options == null -> Text("正在读取模型列表…")
                     options.isEmpty() -> Text("当前套餐未列出可用模型。")
                     else -> LazyColumn(Modifier.heightIn(max = 280.dp)) {

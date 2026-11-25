@@ -8,12 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,11 +47,11 @@ internal fun CodexSettings(model: WriterModel, current: String?) {
             }
         }
     }
-    Text("青简服务器 Codex", style = MaterialTheme.typography.titleLarge)
+    Text("青简服务器 Codex", style = WriterTheme.typography.titleLarge)
     if (status == null) {
         OutlinedButton(onClick = { login = true }) { Text("登录青简服务器") }
     } else {
-        Text(endpoint, style = MaterialTheme.typography.bodySmall)
+        Text(endpoint, style = WriterTheme.typography.bodySmall)
         if (status?.optBoolean("codex") == true) OutlinedButton(onClick = model::useStudio) {
             Text(if (current == STUDIO_ACCOUNT) "正在使用服务器 Codex" else "使用服务器 Codex")
         }
@@ -73,9 +68,9 @@ internal fun CodexSettings(model: WriterModel, current: String?) {
                     val connected = account.optBoolean("connected")
                     val auth = account.optJSONObject("login")
                     val waiting = auth?.string("state") == "pending"
-                    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+                    Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(account.string("name"), style = MaterialTheme.typography.titleMedium)
+                            Text(account.string("name"), style = WriterTheme.typography.titleMedium)
                             Text(when {
                                 waiting -> "等待设备授权"
                                 connected -> if (cli.string("selected") == id) "已连接 · 当前账号" else "已连接"
@@ -93,7 +88,7 @@ internal fun CodexSettings(model: WriterModel, current: String?) {
                             if (waiting) {
                                 val code = auth?.string("code").orEmpty()
                                 val url = auth?.string("url").orEmpty()
-                                if (code.isNotBlank()) Text(code, style = MaterialTheme.typography.headlineSmall)
+                                if (code.isNotBlank()) Text(code, style = WriterTheme.typography.headlineSmall)
                                 val parsed = android.net.Uri.parse(url)
                                 if (parsed.scheme == "https" && parsed.host == "auth.openai.com") {
                                     TextButton(onClick = { browser.openUri(url) }) { Text("在浏览器中打开授权页") }
@@ -128,7 +123,7 @@ internal fun CodexSettings(model: WriterModel, current: String?) {
                     OutlinedTextField(id, { id = it }, singleLine = true, label = { Text("模型 ID，留空使用服务器默认") })
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         listOf("" to "默认", "low" to "低", "medium" to "中", "high" to "高", "xhigh" to "最高")
-                            .forEach { (key, label) -> FilterChip(effort == key, { effort = key }, label = { Text(label) }) }
+                            .forEach { (key, label) -> FilterChip(effort == key, { effort = key }, label = label) }
                     }
                     CheckOption("启用 Codex", enabled) { enabled = it }
                 }

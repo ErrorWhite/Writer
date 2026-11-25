@@ -6,11 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +36,7 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     var templateOpen by rememberSaveable { mutableStateOf(false) }
     var gitOpen by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("创作配置", style = MaterialTheme.typography.titleLarge)
+        Text("创作配置", style = WriterTheme.typography.titleLarge)
         OutlinedButton(onClick = { profileOpen = true }) { Text("作品立项与文风") }
         OutlinedButton(onClick = { contextOpen = true }) { Text("上下文与世界书预算") }
         OutlinedButton(onClick = { templateOpen = true }) { Text("任务提示词模板") }
@@ -123,7 +119,7 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
             OutlinedTextField(goal, { goal = it }, singleLine = true, label = { Text("编辑器目标字数") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("white" to "白纸", "warm" to "暖纸").forEach { (key, label) ->
-                    FilterChip(paper == key, { paper = key }, label = { Text(label) })
+                    FilterChip(paper == key, { paper = key }, label = label)
                 }
             }
         }

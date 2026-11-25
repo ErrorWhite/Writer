@@ -12,11 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,8 +70,8 @@ internal fun ParagraphInspector(
                         point.string("chapterId") == chapter.id
                 }
                 Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = if (index in selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                    shape = WriterTheme.shapes.large,
+                    color = if (index in selected) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface
                 ) {
                     Column(Modifier.fillMaxWidth().combinedClickable(
                         onClick = {
@@ -85,8 +81,8 @@ internal fun ParagraphInspector(
                         onDoubleClick = { if (!multi) ask(TextRange(span.start, span.end), setOf(index)) },
                         onLongClick = { if (!multi) editing = index }
                     ).padding(12.dp)) {
-                        Text(span.text, style = MaterialTheme.typography.bodyLarge)
-                        if (notes.isNotEmpty()) Text("${notes.size} 条批注", style = MaterialTheme.typography.labelSmall)
+                        Text(span.text, style = WriterTheme.typography.bodyLarge)
+                        if (notes.isNotEmpty()) Text("${notes.size} 条批注", style = WriterTheme.typography.labelSmall)
                         if (!multi && expanded == index) {
                             Row {
                                 TextButton(onClick = { editing = index }) { Text("编辑") }
@@ -102,7 +98,7 @@ internal fun ParagraphInspector(
                                 }
                                 TextButton(onClick = { ask(TextRange(span.start, span.end), setOf(index)) }) { Text("AI 改稿") }
                             }
-                            notes.forEach { note -> Text(note.string("text"), style = MaterialTheme.typography.bodySmall) }
+                            notes.forEach { note -> Text(note.string("text"), style = WriterTheme.typography.bodySmall) }
                             val original = row?.string("original")
                             if (original != null && original != span.text && original.isNotBlank()) {
                                 TextButton(onClick = { changed(text.replaceRange(span.start, span.end, original)) }) { Text("恢复段落原文") }

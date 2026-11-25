@@ -10,12 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,7 +56,7 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             WorkCollection.entries.forEach { item ->
-                FilterChip(selected = item == section, label = { Text(item.label) }, onClick = {
+                FilterChip(selected = item == section, label = item.label, onClick = {
                     section = item
                     query = ""
                 })
@@ -83,17 +78,17 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
         }
         if (filtered.isEmpty()) Text(if (query.isBlank()) "还没有$title" else "没有匹配的$title")
         filtered.forEach { item ->
-            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+            Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(item.string("title").ifBlank { item.string("kind").ifBlank { title } },
-                        style = MaterialTheme.typography.titleMedium)
+                        style = WriterTheme.typography.titleMedium)
                     Text(item.string(section.body), maxLines = 5)
                     if (section == WorkCollection.Foreshadow) {
                         Text(if (item.string("status") == "recovered") "已回收" else "未回收")
                     }
                     Row {
                         TextButton(onClick = { edit = item }) { Text("查看与编辑") }
-                        TextButton(onClick = { delete = item }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                        TextButton(onClick = { delete = item }) { Text("删除", color = WriterTheme.colorScheme.error) }
                     }
                 }
             }
@@ -194,7 +189,7 @@ private fun ResearchDialog(
                     WorkCollection.Memory, WorkCollection.Reference -> CheckOption("启用", enabled) { enabled = it }
                     else -> Unit
                 }
-                if (conflict) Text("引句在当前章没有唯一匹配，请复制完整段落再试。", color = MaterialTheme.colorScheme.error)
+                if (conflict) Text("引句在当前章没有唯一匹配，请复制完整段落再试。", color = WriterTheme.colorScheme.error)
             }
         },
         confirmButton = {
@@ -250,7 +245,7 @@ private fun ResearchDialog(
 private fun ChoiceRow(items: List<Pair<String, String>>, selected: String, change: (String) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         items.forEach { (key, name) ->
-            FilterChip(selected = selected == key, label = { Text(name) }, onClick = { change(key) })
+            FilterChip(selected = selected == key, label = name, onClick = { change(key) })
         }
     }
 }

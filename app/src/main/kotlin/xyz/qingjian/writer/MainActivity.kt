@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -17,20 +18,13 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import io.github.suqi8.coui.kmp.basic.TopAppBar
-import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.SnackbarHost
+import io.github.suqi8.coui.kmp.basic.SnackbarHostState
+import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -41,11 +35,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,9 +45,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import io.github.suqi8.coui.kmp.theme.COUITheme
-import io.github.suqi8.coui.kmp.theme.darkColorScheme as couiDark
-import io.github.suqi8.coui.kmp.theme.lightColorScheme as couiLight
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,48 +70,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val serif = FontFamily(Font(R.font.source_han_serif_sc, FontWeight.SemiBold))
-private val type = Typography().let {
-    it.copy(
-        headlineLarge = it.headlineLarge.copy(fontFamily = serif, fontWeight = FontWeight.SemiBold),
-        headlineSmall = it.headlineSmall.copy(fontFamily = serif, fontWeight = FontWeight.SemiBold),
-        titleLarge = it.titleLarge.copy(fontFamily = serif, fontWeight = FontWeight.SemiBold)
-    )
-}
-private val lightColors = lightColorScheme(
-    primary = Color(0xFF3D62DF), onPrimary = Color.White,
-    primaryContainer = Color(0xFFE4EAFF), onPrimaryContainer = Color(0xFF172F79),
-    secondaryContainer = Color(0xFFE5EAFB), onSecondaryContainer = Color(0xFF29375A),
-    background = Color(0xFFF1F3F8), onBackground = Color(0xFF242D42),
-    surface = Color(0xFFFCFCFF), onSurface = Color(0xFF242D42),
-    surfaceContainer = Color(0xFFE9EDF7), surfaceContainerHigh = Color(0xFFE3E8F5),
-    onSurfaceVariant = Color(0xFF49546D), outline = Color(0xFF737E98), outlineVariant = Color(0xFFD7DEEE)
-)
-private val darkColors = darkColorScheme(
-    primary = Color(0xFFB8C6FF), onPrimary = Color(0xFF122A75),
-    primaryContainer = Color(0xFF273B77), onPrimaryContainer = Color(0xFFE1E8FF),
-    secondaryContainer = Color(0xFF2E3A58), onSecondaryContainer = Color(0xFFDDE5FF),
-    background = Color(0xFF141923), onBackground = Color(0xFFE9EDF9),
-    surface = Color(0xFF1B2230), onSurface = Color(0xFFE9EDF9),
-    surfaceContainer = Color(0xFF222B3D), surfaceContainerHigh = Color(0xFF293246),
-    onSurfaceVariant = Color(0xFFBCC6DD), outline = Color(0xFF8F9BB6), outlineVariant = Color(0xFF3B475E)
-)
-
-@Composable
-private fun QingjianTheme(dark: Boolean, content: @Composable () -> Unit) {
-    val palette = if (dark) darkColors else lightColors
-    val base = if (dark) couiDark() else couiLight()
-    val colors = remember(dark) {
-        base.copy(
-            primary = palette.primary, onPrimary = palette.onPrimary, background = palette.background,
-            backgroundWithCard = palette.background, surface = palette.surface,
-            labelPrimary = palette.onSurface, labelSecondary = palette.onSurfaceVariant,
-            divider = palette.outlineVariant
-        )
-    }
-    MaterialTheme(colorScheme = palette, typography = type) { COUITheme(colors = colors, content = content) }
-}
-
 @Composable
 private fun WriterApp(model: WriterModel, mode: ThemeMode) {
     val nav = rememberNavController()
@@ -134,9 +79,14 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
     LaunchedEffect(notice) {
         notice?.let { snackbar.showSnackbar(it); model.notice(null) }
     }
-    val openBook: (String) -> Unit = { id -> nav.navigate("book/${Uri.encode(id)}") { launchSingleTop = true } }
+    val openBook: (String) -> Unit = { id ->
+        model.openedBook(id)
+        nav.navigate("book/${Uri.encode(id)}") { launchSingleTop = true }
+    }
+    var resumed by rememberSaveable { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize()) {
+    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) {
+      Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = "shelf") {
             composable("shelf") {
                 ShelfScreen(model, openBook, { nav.navigate("settings") }) {
@@ -148,7 +98,7 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
                 val workspace by remember { model.library.book(standaloneRoleplayId) }
                     .collectAsStateWithLifecycle(initialValue = null)
                 Scaffold(topBar = { BackBar("文本扮演", { nav.popBackStack() }) },
-                    containerColor = MaterialTheme.colorScheme.background) { padding ->
+                    containerColor = WriterTheme.colorScheme.background) { padding ->
                     workspace?.let { RoleplayScreen(model, it, Modifier.padding(padding).consumeWindowInsets(padding).imePadding()) }
                 }
             }
@@ -157,6 +107,14 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+      }
+      LaunchedEffect(Unit) {
+          if (!resumed) {
+              val last = model.resumeBook()
+              if (last != null && nav.currentDestination?.route == "shelf") openBook(last)
+              resumed = true
+          }
+      }
     }
     preview?.let { pending ->
         AlertDialog(
@@ -177,7 +135,7 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
                 Row {
                     TextButton(onClick = model::dismissImport) { Text("取消") }
                     if (pending.existing != null) TextButton(onClick = { model.acceptImport(true, openBook) }) {
-                        Text("覆盖", color = MaterialTheme.colorScheme.error)
+                        Text("覆盖", color = WriterTheme.colorScheme.error)
                     }
                 }
             }
@@ -185,10 +143,9 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BackBar(title: String, back: () -> Unit, actions: @Composable () -> Unit = {}) {
-    TopAppBar(
+    SmallTopAppBar(
         title = title,
         navigationIcon = {
             IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }

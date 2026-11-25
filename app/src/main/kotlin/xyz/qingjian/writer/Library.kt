@@ -16,7 +16,10 @@ import androidx.room.deferredTransaction
 import androidx.room.immediateTransaction
 import androidx.room.useReaderConnection
 import androidx.room.useWriterConnection
+import androidx.room.migration.Migration
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
@@ -56,6 +59,16 @@ internal data class ChapterRow(
     val bookId: String, val id: String, val volumeId: String, val title: String,
     val position: Int, val text: String, val complete: Boolean, val payload: String
 )
+
+@Entity(
+    tableName = "writing_journal",
+    primaryKeys = ["bookId", "chapterId"],
+    foreignKeys = [ForeignKey(
+        entity = ChapterRow::class, parentColumns = ["bookId", "id"],
+        childColumns = ["bookId", "chapterId"], onDelete = ForeignKey.CASCADE
+    )]
+)
+internal data class JournalEntry(val bookId: String, val chapterId: String, val text: String)
 
 @Entity(
     tableName = "chapter_versions",
@@ -99,6 +112,17 @@ internal const val standaloneRoleplayId = "_qingjian_standalone_roleplay"
 
 @Dao
 internal interface LibraryDao {
+    @Upsert suspend fun stage(entry: JournalEntry)
+
+    @Query("SELECT * FROM writing_journal")
+    suspend fun pendingEdits(): List<JournalEntry>
+
+    @Query("SELECT * FROM writing_journal WHERE bookId = :bookId AND chapterId = :chapterId")
+    suspend fun pendingEdit(bookId: String, chapterId: String): JournalEntry?
+
+    @Query("DELETE FROM writing_journal WHERE bookId = :bookId AND chapterId = :chapterId")
+    suspend fun clearEdit(bookId: String, chapterId: String)
+
     @Query("SELECT id, title, (SELECT COUNT(*) FROM chapters WHERE bookId = books.id) AS chapterCount, cover FROM books WHERE id <> '_qingjian_standalone_roleplay' ORDER BY updatedAt DESC")
     fun shelf(): Flow<List<ShelfEntry>>
 
@@ -174,15 +198,31 @@ internal interface LibraryDao {
     suspend fun pruneBookVersions(bookId: String)
 }
 
-@Database(entities = [BookRow::class, VolumeRow::class, ChapterRow::class, ChapterVersion::class, BookVersion::class], version = 1)
+@Database(
+    entities = [BookRow::class, VolumeRow::class, ChapterRow::class, ChapterVersion::class, BookVersion::class, JournalEntry::class],
+    version = 2
+)
 internal abstract class LibraryDatabase : RoomDatabase() {
     abstract fun library(): LibraryDao
+}
+
+private val writingJournalMigration = object : Migration(1, 2) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL(
+            """CREATE TABLE IF NOT EXISTS writing_journal (
+                bookId TEXT NOT NULL, chapterId TEXT NOT NULL, text TEXT NOT NULL,
+                PRIMARY KEY (bookId, chapterId),
+                FOREIGN KEY (bookId, chapterId) REFERENCES chapters (bookId, id) ON DELETE CASCADE
+            )"""
+        )
+    }
 }
 
 internal class Library(context: Context) {
     private val database = Room.databaseBuilder(context, LibraryDatabase::class.java, "qingjian.db")
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
+        .addMigrations(writingJournalMigration)
         .build()
     private val dao = database.library()
 
@@ -261,13 +301,26 @@ internal class Library(context: Context) {
         dao.selectChapter(bookId, chapterId, System.currentTimeMillis())
     }
 
-    suspend fun save(bookId: String, chapterId: String, text: String) = write {
+    suspend fun hasBook(id: String) = dao.book(id) != null
+
+    suspend fun stageEdit(bookId: String, chapterId: String, text: String) = write {
+        dao.stage(JournalEntry(bookId, chapterId, text))
+    }
+
+    suspend fun replayEdits() {
+        for (entry in dao.pendingEdits()) commitEdit(entry.bookId, entry.chapterId)
+    }
+
+    suspend fun commitEdit(bookId: String, chapterId: String) = write {
+        val entry = dao.pendingEdit(bookId, chapterId) ?: return@write
         val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
-        if (chapter.text == text) return@write
-        val updated = chapterJson(chapter)
-        editChapter(updated, text)
-        dao.putChapter(chapterRow(bookId, chapter.volumeId, updated, chapter.position))
-        dao.touchBook(bookId, System.currentTimeMillis())
+        if (chapter.text != entry.text) {
+            val updated = chapterJson(chapter)
+            editChapter(updated, entry.text)
+            dao.putChapter(chapterRow(bookId, chapter.volumeId, updated, chapter.position))
+            dao.touchBook(bookId, System.currentTimeMillis())
+        }
+        dao.clearEdit(bookId, chapterId)
     }
 
     suspend fun addVolume(bookId: String, title: String, direction: String = "") = write {

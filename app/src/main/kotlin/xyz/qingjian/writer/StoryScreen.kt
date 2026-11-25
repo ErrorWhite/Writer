@@ -8,12 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +35,7 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
     val handoff = remember(chapter.payload) { JSONObject(chapter.payload).optJSONObject("handoff") }
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         entries.forEach { item ->
-            FilterChip(chapter.id == item.id, { selected = item.id }, label = { Text(item.title) })
+            FilterChip(chapter.id == item.id, { selected = item.id }, label = item.title)
         }
     }
     TextButton(onClick = { model.perform { select(book.id, chapter.id); openEditor() } }) { Text("打开 ${chapter.title}") }
@@ -66,7 +61,7 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
     for ((key, label) in listOf("threads" to "线索", "relations" to "人物关系", "events" to "剧情事件", "links" to "因果关系")) {
         val records = handoff.records(key)
         if (records.isEmpty()) continue
-        Text(label, style = MaterialTheme.typography.titleLarge)
+        Text(label, style = WriterTheme.typography.titleLarge)
         records.forEachIndexed { index, record ->
             val relation = listOf(record.string("from"), record.string("to")).filter(String::isNotBlank).joinToString(" → ")
             val heading = record.string("title").ifBlank { relation }
@@ -111,9 +106,9 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
 
 @Composable
 private fun StoryNote(title: String, body: String, action: @Composable () -> Unit = {}) {
-    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+    Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(title, style = WriterTheme.typography.titleMedium)
             Text(body)
             action()
         }

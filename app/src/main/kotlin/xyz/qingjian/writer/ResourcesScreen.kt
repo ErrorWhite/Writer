@@ -10,11 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +44,7 @@ internal fun ResourcesScreen(model: WriterModel, book: BookRow) {
     val skillPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importSkill(book.id, uri)
     }
-    Text("资料附件", style = MaterialTheme.typography.titleLarge)
+    Text("资料附件", style = WriterTheme.typography.titleLarge)
     OutlinedButton(onClick = {
         assetPicker.launch(arrayOf("text/plain", "text/markdown", "image/png", "image/jpeg", "image/webp", "image/gif"))
     }) { Text("添加图片或文档") }
@@ -56,14 +52,14 @@ internal fun ResourcesScreen(model: WriterModel, book: BookRow) {
         OutlinedButton(onClick = { imageOpen = true }) { Text("生成配图") }
     }
     assets.sortedByDescending { it.optLong("updatedAt") }.forEach { item ->
-        Surface(onClick = { asset = item }, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
+        Surface(onClick = { asset = item }, shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
             Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                Text(item.string("title"), style = MaterialTheme.typography.titleMedium)
+                Text(item.string("title"), style = WriterTheme.typography.titleMedium)
                 Text(item.string("group").ifBlank { if (item.string("type") == "image") "图片" else "文档" })
             }
         }
     }
-    Text("写作技能", style = MaterialTheme.typography.titleLarge)
+    Text("写作技能", style = WriterTheme.typography.titleLarge)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = {
             skillPicker.launch(arrayOf("application/zip", "application/json", "text/plain", "text/markdown", "application/octet-stream"))
@@ -107,7 +103,7 @@ internal fun ResourcesScreen(model: WriterModel, book: BookRow) {
             onDismissRequest = { skill = null }, title = { Text(item.string("name")) },
             text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(item.string("instruction"))
-                item.records("files").forEach { Text(it.string("path"), style = MaterialTheme.typography.labelLarge) }
+                item.records("files").forEach { Text(it.string("path"), style = WriterTheme.typography.labelLarge) }
                 if (script != null) {
                     Text("脚本入口 · ${script.string("entry")}")
                     if (server != null) {
@@ -149,7 +145,7 @@ private fun ImageDialog(model: WriterModel, bookId: String, dismiss: () -> Unit)
                 OutlinedTextField(prompt, { prompt = it }, minLines = 3, label = { Text("画面描述") })
                 if (candidate?.busy == true) Text("正在生成图片…")
                 candidate?.bytes?.let { AsyncImage(it, "配图候选", Modifier.fillMaxWidth().heightIn(max = 240.dp)) }
-                candidate?.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                candidate?.error?.let { Text(it, color = WriterTheme.colorScheme.error) }
                 if (candidate?.bytes != null) Row {
                     TextButton(onClick = { model.applyImage(bookId, true) }) { Text("采用为封面") }
                     TextButton(onClick = { model.applyImage(bookId, false) }) { Text("保存到附件") }
@@ -183,14 +179,14 @@ private fun AssetDialog(model: WriterModel, book: BookRow, item: JSONObject, dis
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (image) AsyncImage(bytes, item.string("title"), Modifier.fillMaxWidth().heightIn(max = 200.dp))
-                else Text(data.take(1800), style = MaterialTheme.typography.bodySmall)
+                else Text(data.take(1800), style = WriterTheme.typography.bodySmall)
                 OutlinedTextField(title, { title = it }, singleLine = true, label = { Text("名称") })
                 OutlinedTextField(group, { group = it }, singleLine = true, label = { Text("分组") })
                 OutlinedTextField(summary, { summary = it }, label = { Text("摘要") })
                 CheckOption("在写作上下文中使用摘要", context) { context = it }
                 Row {
                     TextButton(onClick = { export.launch(safeFileName(title)) }) { Text("导出") }
-                    TextButton(onClick = { remove = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = { remove = true }) { Text("删除", color = WriterTheme.colorScheme.error) }
                 }
             }
         },

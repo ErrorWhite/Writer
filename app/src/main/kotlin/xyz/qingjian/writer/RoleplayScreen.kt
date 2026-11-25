@@ -14,13 +14,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,23 +59,23 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
             }
             if (avatar != null) AsyncImage(avatar, null, Modifier.size(46.dp).padding(end = 6.dp))
             Text(session?.string("title")?.ifBlank { card?.string("name") ?: "文本扮演" } ?: "文本扮演",
-                Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
             TextButton(onClick = { menu = true }) { Text("会话") }
             DropdownMenu(menu, { menu = false }) {
                 sessions.asReversed().forEach { item ->
                     val character = cards.find { it.string("id") == item.string("cardId") }
-                    DropdownMenuItem({ Text(item.string("title").ifBlank { character?.string("name") ?: "会话" }) },
+                    DropdownMenuItem(item.string("title").ifBlank { character?.string("name") ?: "会话" },
                         onClick = { selected = item.string("id"); menu = false })
                 }
-                if (session != null) DropdownMenuItem({ Text("当前会话设置") }, onClick = { menu = false; sessionOptions = true })
-                if (card != null) DropdownMenuItem({ Text("编辑当前角色") }, onClick = { menu = false; editCard = card })
-                DropdownMenuItem({ Text("新建角色") }, onClick = { menu = false; create = true })
-                DropdownMenuItem({ Text("导入酒馆角色卡") }, onClick = {
+                if (session != null) DropdownMenuItem("当前会话设置", onClick = { menu = false; sessionOptions = true })
+                if (card != null) DropdownMenuItem("编辑当前角色", onClick = { menu = false; editCard = card })
+                DropdownMenuItem("新建角色", onClick = { menu = false; create = true })
+                DropdownMenuItem("导入酒馆角色卡", onClick = {
                     menu = false
                     picker.launch(arrayOf("application/json", "text/plain", "image/png", "application/octet-stream"))
                 })
                 cards.forEach { item ->
-                    DropdownMenuItem({ Text("与 ${item.string("name")} 新开会话") },
+                    DropdownMenuItem("与 ${item.string("name")} 新开会话",
                         onClick = { useCard = item; menu = false })
                 }
             }
@@ -203,22 +197,22 @@ private fun RoleplayConversation(
             }
             items(shown, key = { it.string("id") }) { message ->
                 val user = message.string("role") == "user"
-                Surface(color = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                    shape = MaterialTheme.shapes.large) {
+                Surface(color = if (user) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
+                    shape = WriterTheme.shapes.large) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         Text(if (user) session.string("userName", "玩家") else card.string("name"),
-                            style = MaterialTheme.typography.labelLarge)
-                        Text(message.string("text"), style = MaterialTheme.typography.bodyLarge)
+                            style = WriterTheme.typography.labelLarge)
+                        Text(message.string("text"), style = WriterTheme.typography.bodyLarge)
                         TextButton(enabled = !running, onClick = { branching = messages.indexOf(message) }) { Text("从此分支") }
                     }
                 }
             }
             if (partial != null) item {
-                Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large) {
+                Surface(color = WriterTheme.colorScheme.surface, shape = WriterTheme.shapes.large) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         Text(if (running) card.string("name") else "未完成的回复",
-                            style = MaterialTheme.typography.labelLarge)
-                        Text(partial.text, style = MaterialTheme.typography.bodyLarge)
+                            style = WriterTheme.typography.labelLarge)
+                        Text(partial.text, style = WriterTheme.typography.bodyLarge)
                         if (!running) TextButton(onClick = {
                             model.perform {
                                 mutateBook(bookId) {
@@ -234,7 +228,7 @@ private fun RoleplayConversation(
                 }
             }
         }
-        if (run?.error != null) Text(run.error, color = MaterialTheme.colorScheme.error)
+        if (run?.error != null) Text(run.error, color = WriterTheme.colorScheme.error)
         CurrentPlanNotice(model)
         if (running && partial == null) Text("角色正在回应…")
         if (!running) OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
@@ -293,7 +287,7 @@ private fun RoleplayCardDialog(source: JSONObject? = null, dismiss: () -> Unit, 
                 OutlinedTextField(sample, { sample = it }, label = { Text("示例对话") })
                 card?.let { original ->
                     val warnings = remember(original) { CharacterCardCompatibility.warnings(original) }
-                    warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    warnings.forEach { Text(it, style = WriterTheme.typography.bodySmall) }
                 }
             }
         },
@@ -341,7 +335,7 @@ private fun RoleplaySessionDialog(model: WriterModel, bookId: String, session: J
                     Text("导出角色卡 PNG")
                 }
                 TextButton(enabled = requests["roleplay:$bookId:$id"]?.running != true, onClick = { erase = true }) {
-                    Text("删除会话", color = MaterialTheme.colorScheme.error)
+                    Text("删除会话", color = WriterTheme.colorScheme.error)
                 }
             }
         },

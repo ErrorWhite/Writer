@@ -170,6 +170,11 @@ internal fun sceneSections(text: String): List<String> {
     return sections
 }
 
+internal fun customSceneDividers(text: String): List<SourceSpan> =
+    manuscriptLines(text).filter {
+        it.divider && !it.text.startsWith("    ") && !it.text.startsWith("\t") && !markdownRule.matches(it.text)
+    }.map { SourceSpan(it.start, it.text) }.toList()
+
 internal fun manuscriptMarkdown(text: String): String = buildString {
     manuscriptLines(text).forEach { line ->
         val indentedCode = line.text.startsWith("    ") || line.text.startsWith("\t")

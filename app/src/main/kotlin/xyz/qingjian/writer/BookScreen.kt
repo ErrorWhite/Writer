@@ -29,20 +29,11 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.AlertDialog
 import io.github.suqi8.coui.kmp.basic.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import io.github.suqi8.coui.kmp.basic.NavigationBar
-import io.github.suqi8.coui.kmp.basic.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,22 +72,20 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
             else -> model.perform { back() }
         }
     }
-    BackHandler(onBack = leave)
+    BackHandler(enabled = !keyboardOpen, onBack = leave)
     BoxWithConstraints {
         val wide = maxWidth >= 840.dp
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            topBar = { if (!focus) BackBar(current.title, leave) { BookMenu(model, current, back) } },
-            bottomBar = {
-                if (!keyboardOpen && !focus) NavigationBar {
-                    val tabs = if (wide) listOf(BookPage.Edit, BookPage.Desk, BookPage.Roleplay) else BookPage.entries
-                    tabs.forEach { item ->
-                        NavigationBarItem(
-                            selected = page == item || (wide && item == BookPage.Edit && page == BookPage.Chapters),
-                            onClick = { page = item },
-                            icon = item.icon,
-                            label = item.label
-                        )
+            containerColor = WriterTheme.colorScheme.background,
+            topBar = {
+                if (!focus) BackBar(if (page == BookPage.Edit) current.title else page.label, leave) {
+                    if (page == BookPage.Edit && !keyboardOpen) {
+                        val tools = listOf(BookPage.Chapters, BookPage.Desk, BookPage.Roleplay)
+                        for (tool in tools) {
+                            if (wide && tool == BookPage.Chapters) continue
+                            IconButton(onClick = { page = tool }) { Icon(tool.icon, tool.label) }
+                        }
+                        BookMenu(model, current, back)
                     }
                 }
             }
@@ -108,7 +97,7 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
                 pages.SaveableStateProvider("desk") { BookDesk(model, current, contentModifier) { page = BookPage.Edit } }
             } else if (wide && !focus) {
                 Row(contentModifier) {
-                    Surface(Modifier.width(300.dp), color = MaterialTheme.colorScheme.surface) {
+                    Surface(Modifier.width(300.dp), color = WriterTheme.colorScheme.surface) {
                         DirectoryScreen(model, current, Modifier.fillMaxSize()) { page = BookPage.Edit }
                     }
                     pages.SaveableStateProvider("edit") {
@@ -146,7 +135,7 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
     LazyColumn(modifier, contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("目录", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                Text("目录", Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
                 OutlinedButton(onClick = { creatingVolume = true }) { Text("新建卷") }
             }
         }
@@ -155,19 +144,19 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
         volumes.forEach { volume ->
             item(key = "volume:${volume.id}") {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(volume.title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                    Text(volume.title, Modifier.weight(1f), style = WriterTheme.typography.titleLarge)
                     TextButton(onClick = { newChapterVolume = volume.id }) { Text("新建章") }
                     Box {
                         IconButton(onClick = { volumeActions = volume.id }) { Icon(Icons.Default.MoreVert, "分卷操作") }
                         DropdownMenu(volumeActions == volume.id, { volumeActions = null }) {
-                            DropdownMenuItem({ Text("重命名") }, onClick = { volumeActions = null; renamingVolume = volume.id })
+                            DropdownMenuItem("重命名", onClick = { volumeActions = null; renamingVolume = volume.id })
                             listOf(-1 to "上移", 1 to "下移").forEach { (delta, label) ->
-                                DropdownMenuItem({ Text(label) }, onClick = {
+                                DropdownMenuItem(label, onClick = {
                                     volumeActions = null
                                     model.perform { moveVolume(book.id, volume.id, delta) }
                                 })
                             }
-                            if (byVolume[volume.id].isNullOrEmpty()) DropdownMenuItem({ Text("删除空卷") }, onClick = {
+                            if (byVolume[volume.id].isNullOrEmpty()) DropdownMenuItem("删除空卷", onClick = {
                                 volumeActions = null
                                 model.perform { removeEmptyVolume(book.id, volume.id) }
                             })
@@ -180,27 +169,27 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
                 val selected = chapter.id == book.activeId
                 Surface(
                     onClick = { model.perform { select(book.id, chapter.id); opened() } },
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                    shape = MaterialTheme.shapes.medium
+                    color = if (selected) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
+                    shape = WriterTheme.shapes.medium
                 ) {
                     Row(Modifier.fillMaxWidth().padding(start = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         Text(chapter.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (chapter.complete) Text("定稿", style = MaterialTheme.typography.labelMedium)
+                        if (chapter.complete) Text("定稿", style = WriterTheme.typography.labelMedium)
                         Box {
                             IconButton(onClick = { chapterActions = chapter.id }) { Icon(Icons.Default.MoreVert, "章节管理") }
                             DropdownMenu(chapterActions == chapter.id, { chapterActions = null }) {
                                 listOf(-1 to "上移", 1 to "下移").forEach { (delta, label) ->
-                                    DropdownMenuItem({ Text(label) }, onClick = {
+                                    DropdownMenuItem(label, onClick = {
                                         chapterActions = null
                                         model.perform { moveChapter(book.id, chapter.id, volume.id, delta) }
                                     })
                                 }
-                                DropdownMenuItem({ Text("移至其他卷") }, enabled = volumes.size > 1, onClick = {
+                                DropdownMenuItem("移至其他卷", enabled = volumes.size > 1, onClick = {
                                     chapterActions = null
                                     movingChapter = chapter.id
                                 })
-                                DropdownMenuItem({ Text("删除章节") }, enabled = chapters.size > 1, onClick = {
+                                DropdownMenuItem("删除章节", enabled = chapters.size > 1, onClick = {
                                     chapterActions = null
                                     deletingChapter = chapter.id
                                 })
@@ -245,7 +234,7 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
             confirmButton = {
                 TextButton(onClick = {
                     model.perform { removeChapter(book.id, chapter.id); deletingChapter = null }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除", color = WriterTheme.colorScheme.error) }
             }, dismissButton = { TextButton(onClick = { deletingChapter = null }) { Text("取消") } }
         )
     }
@@ -264,18 +253,18 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
     Box {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Default.MoreVert, "作品管理") }
         DropdownMenu(expanded, { expanded = false }) {
-            DropdownMenuItem(text = { Text("更改书名") }, onClick = { expanded = false; rename = true })
-            DropdownMenuItem(text = { Text("更换封面") }, onClick = {
+            DropdownMenuItem("更改书名", onClick = { expanded = false; rename = true })
+            DropdownMenuItem("更换封面", onClick = {
                 expanded = false
                 cover.launch(arrayOf("image/png", "image/jpeg", "image/webp"))
             })
-            if (book.cover.isNotEmpty()) DropdownMenuItem(text = { Text("清除封面") }, onClick = {
+            if (book.cover.isNotEmpty()) DropdownMenuItem("清除封面", onClick = {
                 expanded = false
                 model.perform { setCover(book.id, "") }
             })
-            if (server != null) DropdownMenuItem({ Text("备份副本到服务器") },
+            if (server != null) DropdownMenuItem("备份副本到服务器",
                 onClick = { expanded = false; upload = true })
-            DropdownMenuItem(text = { Text("删除作品") }, onClick = { expanded = false; remove = true })
+            DropdownMenuItem("删除作品", onClick = { expanded = false; remove = true })
         }
     }
     if (rename) NameDialog("更改书名", "书名", book.title, dismiss = { rename = false }) { title ->
@@ -289,7 +278,7 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
             TextButton(onClick = {
                 remove = false
                 model.deleteBook(book.id, back)
-            }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            }) { Text("删除", color = WriterTheme.colorScheme.error) }
         },
         dismissButton = { TextButton(onClick = { remove = false }) { Text("取消") } }
     )
@@ -316,10 +305,9 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
             Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("工作台", style = MaterialTheme.typography.headlineSmall)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 listOf("写作", "资料", "剧情", "关系图", "附件", "配置").forEach { item ->
-                    FilterChip(deskPage == item, { deskPage = item }, label = { Text(item) })
+                    FilterChip(deskPage == item, { deskPage = item }, label = item)
                 }
             }
             when (deskPage) {
@@ -335,14 +323,14 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, open
                         if (field != key) {
                             if (value == existing) field = key else changedField = key
                         }
-                    }, label = { Text(name) })
+                    }, label = name)
                 }
             }
             OutlinedTextField(value, { value = it }, Modifier.fillMaxWidth(), minLines = 6, label = { Text(label) })
             Button(enabled = value != existing, onClick = { model.perform { updateBookText(book.id, field, value) } }) {
                 Text("保存$label")
             }
-            Text("导出", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
+            Text("导出", style = WriterTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
             ExportFormat.entries.filter { it != ExportFormat.Chapter }.forEach { format ->
                 ExportButton(format, bookFileName, onDestination = { uri -> model.writeExport(uri, book.id, format, null) })
             }

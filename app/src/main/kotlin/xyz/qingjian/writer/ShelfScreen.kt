@@ -27,23 +27,18 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
 import io.github.suqi8.coui.kmp.basic.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import io.github.suqi8.coui.kmp.basic.FloatingActionButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import io.github.suqi8.coui.kmp.basic.Icon
+import io.github.suqi8.coui.kmp.basic.IconButton
 import io.github.suqi8.coui.kmp.basic.TopAppBar
 import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
-import androidx.compose.material3.MaterialTheme
 import io.github.suqi8.coui.kmp.basic.CardListGroup
 import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
 import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
+import io.github.suqi8.coui.kmp.basic.Card
+import io.github.suqi8.coui.kmp.basic.CardDefaults
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -63,7 +58,6 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: () -> Unit, roleplay: () -> Unit) {
     val books by model.library.shelf.collectAsStateWithLifecycle(initialValue = null)
@@ -78,12 +72,12 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
     val scroll = COUIScrollBehavior()
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = WriterTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = "青简书架",
-                color = MaterialTheme.colorScheme.background,
-                largeTitleColor = MaterialTheme.colorScheme.onBackground,
+                color = WriterTheme.colorScheme.background,
+                largeTitleColor = WriterTheme.colorScheme.onBackground,
                 showDivider = false,
                 actions = {
                     IconButton(onClick = roleplay) { Icon(Icons.Default.Person, "文本扮演") }
@@ -101,10 +95,10 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
         val entries = books
         if (entries != null && entries.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp), contentAlignment = Alignment.TopCenter) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Card(colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
                     Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(48.dp))
-                        Text("书架上还没有作品", style = MaterialTheme.typography.headlineSmall)
+                        Text("书架上还没有作品", style = WriterTheme.typography.headlineSmall)
                         Text("可以新建作品，或导入青简全书备份。")
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { creating = true }) { Text("新建作品") }
@@ -122,8 +116,8 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                         if (studio != null) TextButton(onClick = model::listStudioBooks) { Text("服务器书架") }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(cards, { model.setShelfCards(true) }, label = { Text("卡片") })
-                        FilterChip(!cards, { model.setShelfCards(false) }, label = { Text("横排") })
+                        FilterChip(cards, { model.setShelfCards(true) }, label = "卡片")
+                        FilterChip(!cards, { model.setShelfCards(false) }, label = "横排")
                     }
                 }
             }
@@ -165,11 +159,11 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
 @Composable
 private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
     Card(onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
         val details: @Composable () -> Unit = {
-            Text(book.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${book.chapterCount} 章", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(book.title, style = WriterTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("${book.chapterCount} 章", style = WriterTheme.typography.bodyMedium,
+                color = WriterTheme.colorScheme.onSurfaceVariant)
         }
         if (grid) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -195,7 +189,7 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
     if (bytes != null) {
         AsyncImage(bytes, null, modifier, contentScale = ContentScale.Crop)
     } else {
-        Box(modifier.background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+        Box(modifier.background(WriterTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
             Image(painterResource(R.drawable.qingjian_icon), null, Modifier.size(30.dp))
         }
     }
@@ -203,11 +197,11 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
 
 @Composable
 internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Unit) {
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { BackBar("设置", back) }) { padding ->
+    Scaffold(containerColor = WriterTheme.colorScheme.background, topBar = { BackBar("设置", back) }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("外观", style = MaterialTheme.typography.titleLarge)
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+            Text("外观", style = WriterTheme.typography.titleLarge)
+            Card(colors = CardDefaults.defaultColors(color = WriterTheme.colorScheme.surface)) {
                 CardListGroup {
                     ThemeMode.entries.forEach { option ->
                         item(option.name) {

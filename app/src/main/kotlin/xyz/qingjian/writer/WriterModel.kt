@@ -37,6 +37,7 @@ internal enum class ThemeMode(val label: String) {
 }
 
 internal data class DraftKey(val bookId: String, val chapterId: String)
+internal data class WritingPosition(val selectionStart: Int, val selectionEnd: Int, val block: Int, val offset: Int)
 internal enum class SaveState { Saving, Saved, Failed }
 internal data class Draft(val text: String, val state: SaveState = SaveState.Saving)
 internal data class ImportPreview(val book: JSONObject, val existing: BookRow?) {
@@ -51,6 +52,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     val gitHistory = ManuscriptGit(java.io.File(application.filesDir, "book-history"))
     private val resolver: ContentResolver = application.contentResolver
     private val lock = Mutex()
+    private val writingPositions = application.getSharedPreferences("writing_positions", 0)
     private var writer: Job? = null
     private val mutableDrafts = MutableStateFlow<Map<DraftKey, Draft>>(emptyMap())
     val drafts = mutableDrafts.asStateFlow()
@@ -95,6 +97,17 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
 
     init {
         viewModelScope.launch {
+            lock.withLock {
+                try {
+                    library.replayEdits()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    notice("有一份待恢复的书稿。请检查存储空间后重新打开青简。")
+                }
+            }
+        }
+        viewModelScope.launch {
             try {
                 mutableAccounts.value = vault.load()
                 mutableUsage.value = withContext(Dispatchers.IO) { readUsage() }
@@ -111,6 +124,29 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                 notice("无法读取本机 ChatGPT 订阅凭据。")
             }
         }
+    }
+
+    suspend fun resumeBook(): String? = lock.withLock {
+        writingPositions.getString("book", null)?.takeIf { library.hasBook(it) }
+    }
+
+    fun openedBook(bookId: String) {
+        writingPositions.edit().putString("book", bookId).apply()
+    }
+
+    fun writingPosition(key: DraftKey): WritingPosition {
+        val prefix = "${key.bookId}/${key.chapterId}"
+        return WritingPosition(
+            writingPositions.getInt("$prefix/start", 0), writingPositions.getInt("$prefix/end", 0),
+            writingPositions.getInt("$prefix/block", 0), writingPositions.getInt("$prefix/offset", 0)
+        )
+    }
+
+    fun saveWritingPosition(key: DraftKey, position: WritingPosition) {
+        val prefix = "${key.bookId}/${key.chapterId}"
+        writingPositions.edit()
+            .putInt("$prefix/start", position.selectionStart).putInt("$prefix/end", position.selectionEnd)
+            .putInt("$prefix/block", position.block).putInt("$prefix/offset", position.offset).apply()
     }
 
     val theme = application.preferences.data.map { preferences ->
@@ -555,7 +591,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             val (key, draft) = mutableDrafts.value.entries.firstOrNull { it.value.state == SaveState.Saving }
                 ?: return
             val state = try {
-                library.save(key.bookId, key.chapterId, draft.text)
+                library.stageEdit(key.bookId, key.chapterId, draft.text)
+                library.commitEdit(key.bookId, key.chapterId)
                 SaveState.Saved
             } catch (error: CancellationException) {
                 throw error

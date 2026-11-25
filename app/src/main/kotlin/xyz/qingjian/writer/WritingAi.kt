@@ -7,12 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -437,13 +432,13 @@ internal fun WritingAiDialog(
                     TextButton(enabled = !generating, onClick = { menu = true }) { Text(intent.label) }
                     DropdownMenu(menu, { menu = false }) {
                         WritingIntent.entries.forEach { task ->
-                            DropdownMenuItem({ Text(task.label) }, onClick = { intent = task; menu = false })
+                            DropdownMenuItem(task.label, onClick = { intent = task; menu = false })
                         }
                     }
                     if (!generating) OutlinedTextField(instruction, { instruction = it }, Modifier.fillMaxWidth(),
                         label = { Text("作者要求") })
                     if (run != null) {
-                        if (run.error != null) Text(run.error, color = MaterialTheme.colorScheme.error)
+                        if (run.error != null) Text(run.error, color = WriterTheme.colorScheme.error)
                         if (run.reasoning.isNotBlank()) {
                             TextButton(onClick = { substantial = !substantial }) { Text("模型推理摘要") }
                             if (substantial) Text(run.reasoning)
@@ -457,9 +452,9 @@ internal fun WritingAiDialog(
                             Checkbox(id in selected) { selected = if (it) selected + id else selected - id }
                             Column {
                                 Text(item.string("title").ifBlank { item.string("role", item.string("kind")) },
-                                    style = MaterialTheme.typography.titleMedium)
+                                    style = WriterTheme.typography.titleMedium)
                                 Text(item.string("body").ifBlank { item.string("note") })
-                                Text(item.string("quote"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(item.string("quote"), color = WriterTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -471,7 +466,7 @@ internal fun WritingAiDialog(
                                 selected = if (it) selected + id else selected - id
                             })
                             Column {
-                                Text(item.string("before"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(item.string("before"), color = WriterTheme.colorScheme.onSurfaceVariant)
                                 Text(item.string("after"))
                             }
                         }
@@ -479,7 +474,7 @@ internal fun WritingAiDialog(
                 } else {
                     if (review.string("before").isNotBlank()) {
                         TextButton(onClick = { fullDiff = true }) { Text("全屏比对") }
-                        Text("原文", style = MaterialTheme.typography.labelLarge)
+                        Text("原文", style = WriterTheme.typography.labelLarge)
                         Text(review.string("before"), Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()))
                     }
                     OutlinedTextField(change, { change = it }, Modifier.fillMaxWidth(), minLines = 5,

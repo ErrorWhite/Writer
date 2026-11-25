@@ -9,9 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import io.github.suqi8.coui.kmp.basic.HorizontalDivider
+import io.github.suqi8.coui.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -54,15 +53,19 @@ import org.commonmark.node.Text as MarkdownText
 import org.commonmark.node.ThematicBreak
 
 @Composable
-internal fun ManuscriptBlock(node: Node) {
-    val palette = MaterialTheme.colorScheme
-    val body = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif, lineHeight = 29.sp)
+internal fun ManuscriptBlock(
+    node: Node,
+    body: androidx.compose.ui.text.TextStyle = WriterTheme.typography.bodyLarge.copy(
+        fontFamily = FontFamily.Serif, lineHeight = 29.sp
+    )
+) {
+    val palette = WriterTheme.colorScheme
     fun render(input: Node) = buildAnnotatedString { inlineMarkdown(input, palette.primary) }
     when (node) {
         is ThematicBreak -> HorizontalDivider(Modifier.fillMaxWidth(.28f))
         is Heading -> Text(render(node), style = when (node.level) {
-            1 -> MaterialTheme.typography.headlineSmall
-            2 -> MaterialTheme.typography.titleLarge
+            1 -> WriterTheme.typography.headlineSmall
+            2 -> WriterTheme.typography.titleLarge
             else -> body.copy(fontWeight = FontWeight.Bold)
         })
         is TableBlock -> Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
