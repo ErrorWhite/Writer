@@ -18,14 +18,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
+import io.github.suqi8.coui.kmp.basic.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,6 +39,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
@@ -67,20 +68,54 @@ import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 
 @Composable
-internal fun ChapterEditor(model: WriterModel, book: BookRow, modifier: Modifier) {
+internal fun ChapterEditor(
+    model: WriterModel, book: BookRow, modifier: Modifier, focus: Boolean = false, toggleFocus: () -> Unit = {}
+) {
     val chapter by remember(book.id, book.activeId) { model.library.chapter(book.id, book.activeId) }
         .collectAsStateWithLifecycle(initialValue = null)
     val row = chapter?.takeIf { it.id == book.activeId } ?: return
-    key(row.id) { ChapterBody(model, row, modifier) }
+    key(row.id) { ChapterBody(model, book, row, modifier, focus, toggleFocus) }
 }
 
 @Composable
-private fun ChapterBody(model: WriterModel, chapter: ChapterRow, modifier: Modifier) {
+private fun ChapterBody(
+    model: WriterModel, book: BookRow, chapter: ChapterRow, modifier: Modifier, focus: Boolean, toggleFocus: () -> Unit
+) {
     val draftKey = remember(chapter.bookId, chapter.id) { DraftKey(chapter.bookId, chapter.id) }
     val drafts by model.drafts.collectAsStateWithLifecycle()
     val draft = drafts[draftKey]
     val text = draft?.text ?: chapter.text
     var editor by remember { mutableStateOf(TextFieldValue(text)) }
+    val undo = remember { ArrayDeque<TextFieldValue>() }
+    val redo = remember { ArrayDeque<TextFieldValue>() }
+    var lastRecorded by remember { mutableStateOf(0L) }
+    var undoSize by remember { mutableStateOf(0) }
+    var redoSize by remember { mutableStateOf(0) }
+    var find by rememberSaveable { mutableStateOf(false) }
+    var formatting by rememberSaveable { mutableStateOf(false) }
+    var ai by rememberSaveable { mutableStateOf(false) }
+    var closeChapter by rememberSaveable { mutableStateOf(false) }
+    val settings = remember(book.payload) { org.json.JSONObject(book.payload) }
+    val bodySize = settings.optInt("fontSize", 17).coerceIn(13, 32).sp
+    val goal = settings.optInt("goal")
+    val paper = if (settings.string("paper") == "warm" && MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
+        Color(0xFFFFF7E8)
+    } else MaterialTheme.colorScheme.surface
+    fun change(next: TextFieldValue, checkpoint: Boolean = false) {
+        if (next.text != editor.text) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (checkpoint || lastRecorded == 0L || now - lastRecorded > 650) {
+                if (undo.size == 80) undo.removeFirst()
+                undo.addLast(editor.copy(composition = null))
+            }
+            lastRecorded = now
+            redo.clear()
+            undoSize = undo.size
+            redoSize = 0
+            model.edit(draftKey, next.text)
+        }
+        editor = next
+    }
     var preview by rememberSaveable { mutableStateOf(false) }
     var details by rememberSaveable { mutableStateOf(false) }
     var history by rememberSaveable { mutableStateOf(false) }
@@ -102,6 +137,11 @@ private fun ChapterBody(model: WriterModel, chapter: ChapterRow, modifier: Modif
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem(text = { Text("编辑章节信息") }, onClick = { details = true; menu = false })
                         DropdownMenuItem(text = { Text("章节还原点") }, onClick = { history = true; menu = false })
+                        DropdownMenuItem(text = { Text("查找与替换") }, onClick = { find = true; menu = false })
+                        DropdownMenuItem(text = { Text(if (focus) "退出专注模式" else "专注模式") },
+                            onClick = { toggleFocus(); menu = false })
+                        DropdownMenuItem(text = { Text("AI 写作与审阅") }, onClick = { ai = true; menu = false })
+                        DropdownMenuItem(text = { Text("定稿与下章交接") }, onClick = { closeChapter = true; menu = false })
                     }
                 }
             }
@@ -113,7 +153,7 @@ private fun ChapterBody(model: WriterModel, chapter: ChapterRow, modifier: Modif
                 val count by produceState(0, editor.text) {
                     value = withContext(Dispatchers.Default) { manuscriptWordCount(editor.text) }
                 }
-                Text("$count 字${if (chapter.complete) " · 定稿" else ""}",
+                Text("$count${if (goal > 0) " / $goal" else ""} 字${if (chapter.complete) " · 定稿" else ""}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 if (draft?.state == SaveState.Failed) {
                     TextButton(onClick = { model.retry(draftKey) }) { Text("保存失败，重试") }
@@ -122,20 +162,37 @@ private fun ChapterBody(model: WriterModel, chapter: ChapterRow, modifier: Modif
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Surface(Modifier.weight(1f).fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+            if (!preview) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                TextButton(enabled = undoSize > 0, onClick = {
+                    redo.addLast(editor.copy(composition = null))
+                    editor = undo.removeLast()
+                    model.edit(draftKey, editor.text)
+                    lastRecorded = 0
+                    redoSize = redo.size
+                    undoSize = undo.size
+                }) { Text("撤销") }
+                TextButton(enabled = redoSize > 0, onClick = {
+                    undo.addLast(editor.copy(composition = null))
+                    editor = redo.removeLast()
+                    model.edit(draftKey, editor.text)
+                    lastRecorded = 0
+                    redoSize = redo.size
+                    undoSize = undo.size
+                }) { Text("重做") }
+                TextButton(onClick = { formatting = !formatting }) { Text(if (formatting) "收起格式" else "格式") }
+            }
+            if (formatting && !preview) FormatBar(editor) { change(it, true) }
+            Surface(Modifier.weight(1f).fillMaxWidth(), color = paper, shape = MaterialTheme.shapes.large) {
                 if (preview) {
                     MarkdownPreview(text)
                 } else {
                     BasicTextField(
                         value = editor,
-                        onValueChange = { next ->
-                            val changed = next.text != editor.text
-                            editor = next
-                            if (changed) model.edit(draftKey, next.text)
-                        },
+                        onValueChange = { next -> change(next) },
                         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface, fontSize = 17.sp, lineHeight = 31.sp
+                            color = MaterialTheme.colorScheme.onSurface, fontSize = bodySize,
+                            lineHeight = bodySize * 1.75f, fontFamily = FontFamily.Serif
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         decorationBox = { inner ->
@@ -151,6 +208,9 @@ private fun ChapterBody(model: WriterModel, chapter: ChapterRow, modifier: Modif
     }
     if (details) ChapterDetails(model, chapter) { details = false }
     if (history) HistoryDialog(model, chapter) { history = false }
+    if (find) FindDialog(editor, { change(it, true) }) { find = false }
+    if (ai) WritingAiDialog(model, book, chapter, editor.selection) { ai = false }
+    if (closeChapter) ManualHandoff(model, chapter) { closeChapter = false }
 }
 
 @Composable

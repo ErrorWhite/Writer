@@ -16,25 +16,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
+import io.github.suqi8.coui.kmp.basic.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import io.github.suqi8.coui.kmp.basic.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
+import io.github.suqi8.coui.kmp.basic.TopAppBar
+import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
+import io.github.suqi8.coui.kmp.basic.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,17 +65,16 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
         if (it != null) model.previewImport(it)
     }
     val pickBackup = { importPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = COUIScrollBehavior()
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            LargeTopAppBar(
-                title = { Text("青简书架", style = MaterialTheme.typography.headlineLarge) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
-                ),
+            TopAppBar(
+                title = "青简书架",
+                color = MaterialTheme.colorScheme.background,
+                largeTitleColor = MaterialTheme.colorScheme.onBackground,
+                showDivider = false,
                 actions = { IconButton(onClick = settings) { Icon(Icons.Default.Settings, "设置") } },
                 scrollBehavior = scroll
             )
@@ -152,7 +152,8 @@ private fun Cover(book: ShelfEntry) {
 @Composable
 internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Unit) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { BackBar("设置", back) }) { padding ->
-        Column(Modifier.padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("外观", style = MaterialTheme.typography.titleLarge)
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                 ThemeMode.entries.forEach { item ->
@@ -163,6 +164,7 @@ internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Uni
                     )
                 }
             }
+            ProviderSettings(model)
         }
     }
 }

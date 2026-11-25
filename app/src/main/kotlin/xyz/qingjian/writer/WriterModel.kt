@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,12 +55,161 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     val importPreview = mutableImport.asStateFlow()
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
+    private val vault = ProviderVault(application)
+    private val client = ModelClient()
+    private val mutableAccounts = MutableStateFlow<List<ProviderAccount>?>(null)
+    val accounts = mutableAccounts.asStateFlow()
+    private val selectedAccountKey = stringPreferencesKey("active_provider_account")
+    val activeAccount = application.preferences.data.map { it[selectedAccountKey] }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    private val mutableGenerations = MutableStateFlow<Map<String, Generation>>(emptyMap())
+    val generations = mutableGenerations.asStateFlow()
+    private val requests = mutableMapOf<String, Job>()
+    private val usageStorage = application.getSharedPreferences("model_usage", 0)
+    private val mutableUsage = MutableStateFlow<List<UsageEntry>>(emptyList())
+    val usage = mutableUsage.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            try {
+                mutableAccounts.value = vault.load()
+                mutableUsage.value = withContext(Dispatchers.IO) { readUsage() }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                notice("无法读取本机模型账号。")
+            }
+        }
+    }
 
     val theme = application.preferences.data.map { preferences ->
         ThemeMode.entries.firstOrNull { it.name == preferences[themeKey] } ?: ThemeMode.System
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.System)
 
     fun setTheme(mode: ThemeMode) = perform { application.preferences.edit { it[themeKey] = mode.name } }
+
+    fun saveAccount(account: ProviderAccount) = perform {
+        require(account.name.isNotBlank() && account.model.isNotBlank() && account.key.isNotBlank()) {
+            "请填写账号名称、模型和 API Key。"
+        }
+        account.url("models")
+        val current = requireNotNull(mutableAccounts.value) { "模型账号尚未加载。" }
+        val updated = if (current.none { it.id == account.id }) current + account
+            else current.map { if (it.id == account.id) account else it }
+        vault.save(updated)
+        mutableAccounts.value = updated
+        if (activeAccount.value == null && account.enabled) selectAccount(account.id)
+        notice("模型账号已保存")
+    }
+
+    fun removeAccount(id: String) = perform {
+        val updated = requireNotNull(mutableAccounts.value).filter { it.id != id }
+        vault.save(updated)
+        mutableAccounts.value = updated
+        if (activeAccount.value == id) selectAccount(updated.firstOrNull { it.enabled }?.id)
+    }
+
+    fun useAccount(id: String) = perform { selectAccount(id) }
+
+    private suspend fun selectAccount(id: String?) {
+        application.preferences.edit { if (id == null) it.remove(selectedAccountKey) else it[selectedAccountKey] = id }
+    }
+
+    fun listModels(account: ProviderAccount, complete: (Result<List<String>>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                complete(Result.success(client.models(account)))
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                complete(Result.failure(error))
+            }
+        }
+    }
+
+    fun generate(
+        id: String,
+        intent: String,
+        prepare: suspend Library.() -> Pair<String, List<ModelMessage>>,
+        accept: suspend Library.(String) -> Unit = {}
+    ) {
+        if (requests[id]?.isActive == true) return
+        val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == activeAccount.value && it.enabled }
+        if (account == null) {
+            notice("请先在设置中启用并选中一个模型账号。")
+            return
+        }
+        mutableGenerations.update { it + (id to Generation(running = true)) }
+        requests[id] = viewModelScope.launch {
+            try {
+                val (system, messages) = lock.withLock {
+                    flush()
+                    check(mutableDrafts.value.values.none { it.state == SaveState.Failed }) { "请先保存正文。" }
+                    library.prepare()
+                }
+                var meter: ModelUsage? = null
+                val text = client.generate(account, system, messages,
+                    onText = { chunk -> updateGeneration(id) { it.copy(text = it.text + chunk) } },
+                    onReasoning = { chunk -> updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) } },
+                    onUsage = { meter = it })
+                lock.withLock {
+                    flush()
+                    library.accept(text)
+                    meter?.let {
+                        val entry = UsageEntry(java.time.LocalDate.now().toString(), intent, account.name, account.model,
+                            it.input, it.output, it.cached)
+                        val updated = (mutableUsage.value + entry).takeLast(2000)
+                        withContext(Dispatchers.IO) {
+                            usageStorage.edit().putString("entries", JSONArray(updated.map(UsageEntry::json)).toString()).commit()
+                        }
+                        mutableUsage.value = updated
+                    }
+                }
+                updateGeneration(id) { it.copy(running = false, completed = true) }
+            } catch (error: CancellationException) {
+                updateGeneration(id) { it.copy(running = false, error = "已停止") }
+                throw error
+            } catch (error: Exception) {
+                updateGeneration(id) { it.copy(running = false, error = error.localizedMessage ?: "模型请求失败。") }
+            } finally {
+                requests.remove(id)
+            }
+        }
+    }
+
+    fun stopGeneration(id: String) { requests[id]?.cancel() }
+
+    fun clearGeneration(id: String) {
+        if (requests[id]?.isActive != true) mutableGenerations.update { it - id }
+    }
+
+    private fun updateGeneration(id: String, transform: (Generation) -> Generation) {
+        mutableGenerations.update { values -> values[id]?.let { values + (id to transform(it)) } ?: values }
+    }
+
+    private fun readUsage() = JSONArray(usageStorage.getString("entries", "[]")).objects().map { row ->
+        fun number(key: String) = (row.opt(key) as? Number)?.toInt()
+        UsageEntry(row.string("day"), row.string("intent"), row.string("account"), row.string("model"),
+            number("input"), number("output"), number("cached"))
+    }
+
+    fun importRoleplayCard(bookId: String, uri: Uri, opened: (String) -> Unit) = perform {
+        val card = withContext(Dispatchers.IO) {
+            readRoleplayCard(read(uri, 32, "角色卡不能超过 32 MB。"))
+        }
+        val session = newRoleplaySession(card, card.string("greeting"))
+        mutateBook(bookId) { payload -> roleplay(payload).apply {
+            optJSONArray("cards")!!.put(card)
+            optJSONArray("sessions")!!.put(session)
+        } }
+        opened(session.string("id"))
+    }
+
+    fun exportRoleplay(uri: Uri, data: () -> ByteArray) = perform {
+        withContext(Dispatchers.IO) {
+            val stream = requireNotNull(resolver.openOutputStream(uri, "wt")) { "无法打开导出文件。" }
+            stream.use { it.write(data()) }
+        }
+        notice("已导出")
+    }
 
     fun edit(key: DraftKey, text: String) {
         mutableDrafts.value += key to Draft(text)
@@ -175,6 +325,14 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         notice("已还原章节")
     }
 
+    fun restoreBookVersion(bookId: String, versionId: Long, restored: () -> Unit) = perform {
+        val drafts = mutableDrafts.value
+        restoreBook(bookId, versionId)
+        mutableDrafts.value = mutableDrafts.value.filter { (key, value) -> key.bookId != bookId || drafts[key] !== value }
+        restored()
+        notice("已还原全书")
+    }
+
     fun deleteBook(bookId: String, deleted: () -> Unit) = perform {
         remove(bookId)
         mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != bookId }
@@ -187,6 +345,17 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     }
 
     fun notice(message: String?) { mutableNotice.value = message }
+}
+
+internal data class Generation(val running: Boolean, val text: String = "", val reasoning: String = "",
+    val completed: Boolean = false, val error: String? = null)
+
+internal data class UsageEntry(
+    val day: String, val intent: String, val account: String, val model: String,
+    val input: Int?, val output: Int?, val cached: Int?
+) {
+    fun json() = JSONObject().put("day", day).put("intent", intent).put("account", account).put("model", model)
+        .put("input", input ?: JSONObject.NULL).put("output", output ?: JSONObject.NULL).put("cached", cached ?: JSONObject.NULL)
 }
 
 internal fun InputStream.readLimited(limit: Int, message: String): ByteArray {

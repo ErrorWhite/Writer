@@ -125,7 +125,7 @@ private val fencePattern = Regex("^ {0,3}(`{3,}|~{3,})(.*)$")
 private val dividerPattern = Regex("""(?:\*{3,}|[-‐‑‒–—―─━]{2,}|_{3,}|={3,}|[·•]{3,}|[✦❖※◇✧]{1,5})""")
 private val markdownRule = Regex(""" *(?:-{3,}|_{3,}|\*{3,}) *""")
 
-private data class ManuscriptLine(val text: String, val newline: String, val inCode: Boolean) {
+private data class ManuscriptLine(val text: String, val newline: String, val inCode: Boolean, val start: Int) {
     val divider: Boolean
         get() = !inCode && dividerPattern.matches(
             Normalizer.normalize(text.trim(), Normalizer.Form.NFKC).replace(" ", "").replace("\t", "")
@@ -144,12 +144,29 @@ private fun manuscriptLines(text: String): Sequence<ManuscriptLine> = sequence {
         if (current == null && delimiter != null && (delimiter[0] != '`' || '`' !in info)) {
             fence = delimiter
         }
-        yield(ManuscriptLine(line, newline, fence != null))
+        yield(ManuscriptLine(line, newline, fence != null, match.range.first))
         if (current != null && delimiter != null && current[0] == delimiter[0] &&
             delimiter.length >= current.length && info.isBlank()) {
             fence = null
         }
     }
+}
+
+internal data class SourceSpan(val start: Int, val text: String) {
+    val end get() = start + text.length
+}
+
+internal fun paragraphSpans(text: String): List<SourceSpan> =
+    manuscriptLines(text).filter { it.text.isNotBlank() && !it.divider }
+        .map { SourceSpan(it.start, it.text) }.toList()
+
+internal fun sceneSections(text: String): List<String> {
+    var start = 0
+    val sections = manuscriptLines(text).filter { it.divider }.map { line ->
+        text.substring(start, line.start).also { start = line.start + line.text.length + line.newline.length }
+    }.toMutableList()
+    sections += text.substring(start)
+    return sections
 }
 
 internal fun manuscriptMarkdown(text: String): String = buildString {
@@ -161,8 +178,8 @@ internal fun manuscriptMarkdown(text: String): String = buildString {
 }
 
 // Mirrors 青简 revisions.js. Unchanged lines keep their existing IDs and revision metadata.
-internal fun editChapter(chapter: JSONObject, text: String) {
-    if (chapter.string("text") == text) return
+internal fun editChapter(chapter: JSONObject, text: String, ensureParagraphs: Boolean = false) {
+    if (chapter.string("text") == text && (!ensureParagraphs || chapter.optJSONArray("paragraphs") != null)) return
     val current = chapter.records("paragraphs")
     val lines = manuscriptLines(text).filter { it.text.isNotBlank() && !it.divider }
         .map { it.text }.toList().ifEmpty { listOf("") }

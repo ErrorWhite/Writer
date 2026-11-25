@@ -77,8 +77,24 @@ internal data class ChapterVersion(
     val payload: String
 )
 
+@Entity(
+    tableName = "book_versions",
+    foreignKeys = [ForeignKey(entity = BookRow::class, parentColumns = ["id"], childColumns = ["bookId"],
+        onDelete = ForeignKey.CASCADE)],
+    indices = [Index("bookId")]
+)
+internal data class BookVersion(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val bookId: String,
+    val createdAt: Long,
+    val snapshot: String
+)
+
+internal data class BookVersionEntry(val id: Long, val createdAt: Long)
+
 internal data class ShelfEntry(val id: String, val title: String, val chapterCount: Int, val cover: String)
 internal data class ChapterEntry(val id: String, val volumeId: String, val title: String, val complete: Boolean)
+internal data class ChapterStory(val id: String, val title: String, val volumeId: String, val payload: String)
 
 @Dao
 internal interface LibraryDao {
@@ -105,6 +121,9 @@ internal interface LibraryDao {
 
     @Query("SELECT id, volumeId, title, complete FROM chapters WHERE bookId = :id ORDER BY position")
     fun observeDirectory(id: String): Flow<List<ChapterEntry>>
+
+    @Query("SELECT chapters.id, chapters.title, chapters.volumeId, chapters.payload FROM chapters JOIN volumes ON chapters.bookId = volumes.bookId AND chapters.volumeId = volumes.id WHERE chapters.bookId = :id AND complete = 1 ORDER BY volumes.position, chapters.position")
+    fun observeStory(id: String): Flow<List<ChapterStory>>
 
     @Query("SELECT * FROM chapters WHERE bookId = :id AND id = :chapterId")
     suspend fun chapter(id: String, chapterId: String): ChapterRow?
@@ -141,9 +160,20 @@ internal interface LibraryDao {
 
     @Query("DELETE FROM chapter_versions WHERE bookId = :id AND chapterId = :chapterId AND id NOT IN (SELECT id FROM chapter_versions WHERE bookId = :id AND chapterId = :chapterId ORDER BY id DESC LIMIT 12)")
     suspend fun pruneVersions(id: String, chapterId: String)
+
+    @Query("SELECT id, createdAt FROM book_versions WHERE bookId = :bookId ORDER BY id DESC")
+    fun bookVersions(bookId: String): Flow<List<BookVersionEntry>>
+
+    @Query("SELECT * FROM book_versions WHERE bookId = :bookId AND id = :id")
+    suspend fun bookVersion(bookId: String, id: Long): BookVersion?
+
+    @Insert suspend fun addBookVersion(version: BookVersion)
+
+    @Query("DELETE FROM book_versions WHERE bookId = :bookId AND id NOT IN (SELECT id FROM book_versions WHERE bookId = :bookId ORDER BY id DESC LIMIT 12)")
+    suspend fun pruneBookVersions(bookId: String)
 }
 
-@Database(entities = [BookRow::class, VolumeRow::class, ChapterRow::class, ChapterVersion::class], version = 1)
+@Database(entities = [BookRow::class, VolumeRow::class, ChapterRow::class, ChapterVersion::class, BookVersion::class], version = 1)
 internal abstract class LibraryDatabase : RoomDatabase() {
     abstract fun library(): LibraryDao
 }
@@ -159,8 +189,10 @@ internal class Library(context: Context) {
     fun book(id: String) = dao.observeBook(id)
     fun volumes(id: String) = dao.observeVolumes(id)
     fun directory(id: String) = dao.observeDirectory(id)
+    fun story(id: String) = dao.observeStory(id)
     fun chapter(bookId: String, chapterId: String) = dao.observeChapter(bookId, chapterId)
     fun versions(bookId: String, chapterId: String) = dao.versions(bookId, chapterId)
+    fun bookVersions(bookId: String) = dao.bookVersions(bookId)
 
     suspend fun create(title: String) = store(Manuscript.create(title), null)
 
@@ -198,18 +230,22 @@ internal class Library(context: Context) {
             id
         }
 
-    suspend fun export(bookId: String) = database.useReaderConnection { reader -> reader.deferredTransaction {
+    suspend fun export(bookId: String) = database.useReaderConnection { reader ->
+        reader.deferredTransaction { exportSnapshot(bookId) }
+    }
+
+    private suspend fun exportSnapshot(bookId: String): JSONObject {
         val book = requireNotNull(dao.book(bookId)) { "作品已删除。" }
         val chapters = dao.chapters(bookId).groupBy(ChapterRow::volumeId)
         val volumes = dao.volumes(bookId).map { volume ->
             JSONObject(volume.payload).put("id", volume.id).put("title", volume.title)
                 .put("chapters", JSONArray(chapters[volume.id].orEmpty().map(::chapterJson)))
         }
-        JSONObject(book.payload).put("id", book.id).put("title", book.title).put("activeId", book.activeId)
+        return JSONObject(book.payload).put("id", book.id).put("title", book.title).put("activeId", book.activeId)
             .put("volumes", JSONArray(volumes)).apply {
                 if (!has("cover")) put("cover", book.cover)
             }
-    } }
+    }
 
     suspend fun select(bookId: String, chapterId: String) = write {
         requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
@@ -230,11 +266,74 @@ internal class Library(context: Context) {
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 
-    suspend fun addChapter(bookId: String, volumeId: String, title: String) = write {
+    suspend fun addChapter(bookId: String, volumeId: String, title: String, plan: JSONObject? = null) = write {
         val position = dao.chapters(bookId).count { it.volumeId == volumeId }
-        val chapter = chapterRow(bookId, volumeId, Manuscript.newChapter(title), position)
+        val source = Manuscript.newChapter(title).apply { if (plan != null) put("plan", plan) }
+        val chapter = chapterRow(bookId, volumeId, source, position)
         dao.putChapter(chapter)
         dao.selectChapter(bookId, chapter.id, System.currentTimeMillis())
+    }
+
+    suspend fun renameVolume(bookId: String, volumeId: String, title: String) = write {
+        val volume = dao.volumes(bookId).first { it.id == volumeId }
+        dao.putVolume(volume.copy(title = title))
+        dao.touchBook(bookId, System.currentTimeMillis())
+    }
+
+    suspend fun moveVolume(bookId: String, volumeId: String, offset: Int) = write {
+        val list = dao.volumes(bookId)
+        val from = list.indexOfFirst { it.id == volumeId }
+        val to = from + offset
+        if (from < 0 || to !in list.indices) return@write
+        dao.putVolume(list[from].copy(position = list[to].position))
+        dao.putVolume(list[to].copy(position = list[from].position))
+        dao.touchBook(bookId, System.currentTimeMillis())
+    }
+
+    suspend fun moveChapter(bookId: String, chapterId: String, targetVolume: String, offset: Int? = null) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
+        val list = dao.chapters(bookId)
+        val source = list.filter { it.volumeId == chapter.volumeId }.toMutableList()
+        val index = source.indexOfFirst { it.id == chapterId }
+        if (targetVolume == chapter.volumeId) {
+            val target = index + (offset ?: 0)
+            if (target !in source.indices || target == index) return@write
+            source.removeAt(index)
+            source.add(target, chapter)
+            source.forEachIndexed { position, row -> dao.putChapter(row.copy(position = position)) }
+        } else {
+            val destination = list.filter { it.volumeId == targetVolume }
+            source.removeAt(index)
+            dao.putChapter(chapter.copy(volumeId = targetVolume, position = destination.size))
+            source.forEachIndexed { position, row -> dao.putChapter(row.copy(position = position)) }
+        }
+        dao.touchBook(bookId, System.currentTimeMillis())
+    }
+
+    suspend fun removeChapter(bookId: String, chapterId: String) = write {
+        val volumes = dao.volumes(bookId)
+        val byVolume = dao.chapters(bookId).groupBy(ChapterRow::volumeId)
+        val ordered = volumes.flatMap { byVolume[it.id].orEmpty() }
+        require(ordered.size > 1) { "作品至少需要保留一个章节。" }
+        val index = ordered.indexOfFirst { it.id == chapterId }
+        require(index >= 0) { "章节已删除。" }
+        val chapter = ordered[index]
+        dao.deleteChapter(bookId, chapterId)
+        byVolume[chapter.volumeId].orEmpty().filter { it.id != chapterId }.forEachIndexed { position, row ->
+            dao.putChapter(row.copy(position = position))
+        }
+        val now = System.currentTimeMillis()
+        if (dao.book(bookId)?.activeId == chapterId) {
+            val next = ordered.getOrNull(index + 1) ?: ordered[index - 1]
+            dao.selectChapter(bookId, next.id, now)
+        } else dao.touchBook(bookId, now)
+    }
+
+    suspend fun removeEmptyVolume(bookId: String, volumeId: String) = write {
+        require(dao.chapters(bookId).none { it.volumeId == volumeId }) { "请先将卷内章节移至其他卷。" }
+        dao.deleteVolume(bookId, volumeId)
+        dao.volumes(bookId).forEachIndexed { position, volume -> dao.putVolume(volume.copy(position = position)) }
+        dao.touchBook(bookId, System.currentTimeMillis())
     }
 
     suspend fun updateChapter(bookId: String, chapterId: String, title: String, complete: Boolean) =
@@ -255,6 +354,73 @@ internal class Library(context: Context) {
         it.copy(payload = JSONObject(it.payload).put(key, text).toString())
     }
 
+    suspend fun mutateBook(bookId: String, change: (JSONObject) -> Unit) = updateBook(bookId) {
+        val payload = JSONObject(it.payload)
+        change(payload)
+        it.copy(payload = payload.toString())
+    }
+
+    suspend fun applyChapterCandidate(bookId: String, chapterId: String, previous: String, next: String) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
+        check(chapter.text == previous) { "正文已修改，请重新比对候选稿。" }
+        saveVersion(chapter)
+        val updated = chapterJson(chapter)
+        editChapter(updated, next)
+        dao.putChapter(chapterRow(bookId, chapter.volumeId, updated, chapter.position))
+        dao.touchBook(bookId, System.currentTimeMillis())
+    }
+
+    suspend fun mutateChapter(
+        bookId: String, chapterId: String, bookEdit: ((JSONObject) -> Unit)? = null,
+        change: (JSONObject) -> Unit
+    ) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
+        val value = chapterJson(chapter)
+        change(value)
+        if (chapter.text != value.string("text")) saveVersion(chapter)
+        dao.putChapter(chapterRow(bookId, chapter.volumeId, value, chapter.position))
+        if (bookEdit == null) dao.touchBook(bookId, System.currentTimeMillis())
+        else {
+            val book = requireNotNull(dao.book(bookId))
+            val payload = JSONObject(book.payload)
+            bookEdit(payload)
+            dao.putBook(book.copy(payload = payload.toString(), updatedAt = System.currentTimeMillis()))
+        }
+    }
+
+    suspend fun closeChapter(bookId: String, chapterId: String, baseline: String, reviewId: String?, proposed: JSONObject) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId))
+        val book = requireNotNull(dao.book(bookId))
+        val data = JSONObject(book.payload)
+        val saved = chapterJson(chapter)
+        check(chapter.text == baseline && (reviewId == null || saved.optJSONObject("nativeReview")?.string("id") == reviewId)) {
+            "正文或候选稿已变更，请重新比对。"
+        }
+        val handoff = checkedHandoff(proposed, saved)
+        saved.optJSONObject("handoff")?.optJSONArray("archiveDelta")?.let { undoHandoffArchive(data, it) }
+        val changes = archiveHandoff(data, saved, handoff)
+        handoff.put("archiveVersion", 1).put("archiveDelta", changes).put("at", System.currentTimeMillis())
+        saved.put("handoff", handoff).put("complete", true)
+        if (reviewId != null) saved.remove("nativeReview")
+        saveVersion(chapter)
+        dao.putChapter(chapterRow(bookId, chapter.volumeId, saved, chapter.position))
+        dao.putBook(book.copy(payload = data.toString(), updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun undoChapterArchive(bookId: String, chapterId: String) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId))
+        val book = requireNotNull(dao.book(bookId))
+        val saved = chapterJson(chapter)
+        val handoff = requireNotNull(saved.optJSONObject("handoff")) { "本章还没有交接。" }
+        val delta = requireNotNull(handoff.optJSONArray("archiveDelta")) { "本章没有可撤销的归档记录。" }
+        val data = JSONObject(book.payload)
+        undoHandoffArchive(data, delta)
+        handoff.remove("archiveDelta")
+        handoff.remove("archiveVersion")
+        dao.putChapter(chapterRow(bookId, chapter.volumeId, saved, chapter.position))
+        dao.putBook(book.copy(payload = data.toString(), updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun remove(bookId: String) = dao.deleteBook(bookId)
 
     private suspend fun updateBook(bookId: String, update: (BookRow) -> BookRow) = write {
@@ -265,6 +431,20 @@ internal class Library(context: Context) {
     suspend fun snapshot(bookId: String, chapterId: String) = write {
         val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
         saveVersion(chapter)
+    }
+
+    suspend fun snapshotBook(bookId: String) = write { saveBookVersion(bookId) }
+
+    suspend fun restoreBook(bookId: String, id: Long) = write {
+        val version = requireNotNull(dao.bookVersion(bookId, id)) { "还原点已不存在。" }
+        saveBookVersion(bookId)
+        store(Manuscript.read(version.snapshot), bookId)
+    }
+
+    private suspend fun saveBookVersion(bookId: String) {
+        dao.addBookVersion(BookVersion(bookId = bookId, createdAt = System.currentTimeMillis(),
+            snapshot = exportSnapshot(bookId).toString()))
+        dao.pruneBookVersions(bookId)
     }
 
     suspend fun restore(bookId: String, chapterId: String, versionId: Long) = write {

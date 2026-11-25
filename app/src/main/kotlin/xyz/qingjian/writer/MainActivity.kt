@@ -20,12 +20,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import io.github.suqi8.coui.kmp.basic.TopAppBar
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -44,7 +43,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,6 +52,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import io.github.suqi8.coui.kmp.theme.COUITheme
+import io.github.suqi8.coui.kmp.theme.darkColorScheme as couiDark
+import io.github.suqi8.coui.kmp.theme.lightColorScheme as couiLight
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,7 +109,17 @@ private val darkColors = darkColorScheme(
 
 @Composable
 private fun QingjianTheme(dark: Boolean, content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (dark) darkColors else lightColors, typography = type, content = content)
+    val palette = if (dark) darkColors else lightColors
+    val base = if (dark) couiDark() else couiLight()
+    val colors = remember(dark) {
+        base.copy(
+            primary = palette.primary, onPrimary = palette.onPrimary, background = palette.background,
+            backgroundWithCard = palette.background, surface = palette.surface,
+            labelPrimary = palette.onSurface, labelSecondary = palette.onSurfaceVariant,
+            divider = palette.outlineVariant
+        )
+    }
+    MaterialTheme(colorScheme = palette, typography = type) { COUITheme(colors = colors, content = content) }
 }
 
 @Composable
@@ -163,7 +174,7 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
 @Composable
 internal fun BackBar(title: String, back: () -> Unit, actions: @Composable () -> Unit = {}) {
     TopAppBar(
-        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        title = title,
         navigationIcon = {
             IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
         },

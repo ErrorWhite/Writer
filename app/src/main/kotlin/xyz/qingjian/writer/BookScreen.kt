@@ -27,18 +27,17 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import io.github.suqi8.coui.kmp.basic.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import io.github.suqi8.coui.kmp.basic.NavigationBar
+import io.github.suqi8.coui.kmp.basic.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -62,7 +61,8 @@ import org.json.JSONObject
 private enum class BookPage(val label: String, val icon: ImageVector) {
     Edit("写作", Icons.Default.Edit),
     Chapters("目录", Icons.Default.List),
-    Desk("工作台", Icons.Default.Settings)
+    Desk("工作台", Icons.Default.Settings),
+    Roleplay("扮演", Icons.Default.Person)
 }
 
 @Composable
@@ -72,39 +72,46 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
     val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val pages = rememberSaveableStateHolder()
     var page by rememberSaveable { mutableStateOf(BookPage.Edit) }
+    var focus by rememberSaveable { mutableStateOf(false) }
     val leave: () -> Unit = {
-        if (page != BookPage.Edit) page = BookPage.Edit else model.perform { back() }
+        when {
+            focus -> focus = false
+            page != BookPage.Edit -> page = BookPage.Edit
+            else -> model.perform { back() }
+        }
     }
     BackHandler(onBack = leave)
     BoxWithConstraints {
         val wide = maxWidth >= 840.dp
         Scaffold(
             containerColor = MaterialTheme.colorScheme.background,
-            topBar = { BackBar(current.title, leave) { BookMenu(model, current, back) } },
+            topBar = { if (!focus) BackBar(current.title, leave) { BookMenu(model, current, back) } },
             bottomBar = {
-                if (!keyboardOpen) NavigationBar {
-                    val tabs = if (wide) listOf(BookPage.Edit, BookPage.Desk) else BookPage.entries
+                if (!keyboardOpen && !focus) NavigationBar {
+                    val tabs = if (wide) listOf(BookPage.Edit, BookPage.Desk, BookPage.Roleplay) else BookPage.entries
                     tabs.forEach { item ->
                         NavigationBarItem(
                             selected = page == item || (wide && item == BookPage.Edit && page == BookPage.Chapters),
                             onClick = { page = item },
-                            icon = { Icon(item.icon, null) },
-                            label = { Text(item.label) }
+                            icon = item.icon,
+                            label = item.label
                         )
                     }
                 }
             }
         ) { padding ->
             val contentModifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()
-            if (page == BookPage.Desk) {
-                pages.SaveableStateProvider("desk") { BookDesk(model, current, contentModifier) }
-            } else if (wide) {
+            if (page == BookPage.Roleplay) {
+                pages.SaveableStateProvider("roleplay") { RoleplayScreen(model, current, contentModifier) }
+            } else if (page == BookPage.Desk) {
+                pages.SaveableStateProvider("desk") { BookDesk(model, current, contentModifier) { page = BookPage.Edit } }
+            } else if (wide && !focus) {
                 Row(contentModifier) {
                     Surface(Modifier.width(300.dp), color = MaterialTheme.colorScheme.surface) {
                         DirectoryScreen(model, current, Modifier.fillMaxSize()) { page = BookPage.Edit }
                     }
                     pages.SaveableStateProvider("edit") {
-                        ChapterEditor(model, current, Modifier.weight(1f).fillMaxSize())
+                        ChapterEditor(model, current, Modifier.weight(1f).fillMaxSize(), focus) { focus = !focus }
                     }
                 }
             } else if (page == BookPage.Chapters) {
@@ -112,7 +119,9 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
                     DirectoryScreen(model, current, contentModifier) { page = BookPage.Edit }
                 }
             } else {
-                pages.SaveableStateProvider("edit") { ChapterEditor(model, current, contentModifier) }
+                pages.SaveableStateProvider("edit") {
+                    ChapterEditor(model, current, contentModifier, focus) { focus = !focus }
+                }
             }
         }
     }
@@ -127,6 +136,12 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
     val byVolume = remember(chapters) { chapters.groupBy(ChapterEntry::volumeId) }
     var creatingVolume by rememberSaveable { mutableStateOf(false) }
     var newChapterVolume by rememberSaveable { mutableStateOf<String?>(null) }
+    var volumeActions by rememberSaveable { mutableStateOf<String?>(null) }
+    var chapterActions by rememberSaveable { mutableStateOf<String?>(null) }
+    var renamingVolume by rememberSaveable { mutableStateOf<String?>(null) }
+    var movingChapter by rememberSaveable { mutableStateOf<String?>(null) }
+    var deletingChapter by rememberSaveable { mutableStateOf<String?>(null) }
+    var query by rememberSaveable { mutableStateOf("") }
     LazyColumn(modifier, contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -134,23 +149,62 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
                 OutlinedButton(onClick = { creatingVolume = true }) { Text("新建卷") }
             }
         }
+        item { OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
+            label = { Text("查找章节") }) }
         volumes.forEach { volume ->
             item(key = "volume:${volume.id}") {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(volume.title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                     TextButton(onClick = { newChapterVolume = volume.id }) { Text("新建章") }
+                    Box {
+                        IconButton(onClick = { volumeActions = volume.id }) { Icon(Icons.Default.MoreVert, "分卷操作") }
+                        DropdownMenu(volumeActions == volume.id, { volumeActions = null }) {
+                            DropdownMenuItem({ Text("重命名") }, onClick = { volumeActions = null; renamingVolume = volume.id })
+                            listOf(-1 to "上移", 1 to "下移").forEach { (delta, label) ->
+                                DropdownMenuItem({ Text(label) }, onClick = {
+                                    volumeActions = null
+                                    model.perform { moveVolume(book.id, volume.id, delta) }
+                                })
+                            }
+                            if (byVolume[volume.id].isNullOrEmpty()) DropdownMenuItem({ Text("删除空卷") }, onClick = {
+                                volumeActions = null
+                                model.perform { removeEmptyVolume(book.id, volume.id) }
+                            })
+                        }
+                    }
                 }
             }
-            items(byVolume[volume.id].orEmpty(), key = { "chapter:${it.id}" }) { chapter ->
+            items(byVolume[volume.id].orEmpty().filter { it.title.contains(query.trim(), ignoreCase = true) },
+                key = { "chapter:${it.id}" }) { chapter ->
                 val selected = chapter.id == book.activeId
                 Surface(
                     onClick = { model.perform { select(book.id, chapter.id); opened() } },
                     color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                     shape = MaterialTheme.shapes.medium
                 ) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(start = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
                         Text(chapter.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
                         if (chapter.complete) Text("定稿", style = MaterialTheme.typography.labelMedium)
+                        Box {
+                            IconButton(onClick = { chapterActions = chapter.id }) { Icon(Icons.Default.MoreVert, "章节管理") }
+                            DropdownMenu(chapterActions == chapter.id, { chapterActions = null }) {
+                                listOf(-1 to "上移", 1 to "下移").forEach { (delta, label) ->
+                                    DropdownMenuItem({ Text(label) }, onClick = {
+                                        chapterActions = null
+                                        model.perform { moveChapter(book.id, chapter.id, volume.id, delta) }
+                                    })
+                                }
+                                DropdownMenuItem({ Text("移至其他卷") }, enabled = volumes.size > 1, onClick = {
+                                    chapterActions = null
+                                    movingChapter = chapter.id
+                                })
+                                DropdownMenuItem({ Text("删除章节") }, enabled = chapters.size > 1, onClick = {
+                                    chapterActions = null
+                                    deletingChapter = chapter.id
+                                })
+                            }
+                        }
                     }
                 }
             }
@@ -163,6 +217,36 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
         NameDialog("新建章节", "章名", dismiss = { newChapterVolume = null }) { name ->
             model.perform { addChapter(book.id, volume, name); opened() }
         }
+    }
+    volumes.find { it.id == renamingVolume }?.let { volume ->
+        NameDialog("更改卷名", "卷名", volume.title, dismiss = { renamingVolume = null }) { name ->
+            model.perform { renameVolume(book.id, volume.id, name) }
+        }
+    }
+    chapters.find { it.id == movingChapter }?.let { chapter ->
+        AlertDialog(
+            onDismissRequest = { movingChapter = null }, title = { Text("移至其他卷") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    volumes.filter { it.id != chapter.volumeId }.forEach { target ->
+                        TextButton(onClick = {
+                            model.perform { moveChapter(book.id, chapter.id, target.id); movingChapter = null }
+                        }) { Text(target.title) }
+                    }
+                }
+            }, confirmButton = { TextButton(onClick = { movingChapter = null }) { Text("取消") } }
+        )
+    }
+    chapters.find { it.id == deletingChapter }?.let { chapter ->
+        AlertDialog(
+            onDismissRequest = { deletingChapter = null }, title = { Text("删除「${chapter.title}」？") },
+            text = { Text("章节正文和章节还原点会从本机删除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    model.perform { removeChapter(book.id, chapter.id); deletingChapter = null }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            }, dismissButton = { TextButton(onClick = { deletingChapter = null }) { Text("取消") } }
+        )
     }
 }
 
@@ -207,13 +291,14 @@ private fun BookMenu(model: WriterModel, book: BookRow, back: () -> Unit) {
 }
 
 @Composable
-private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier) {
+private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier, openEditor: () -> Unit) {
     val details = remember(book.payload) { JSONObject(book.payload) }
     var field by rememberSaveable(book.id) { mutableStateOf("outline") }
     val label = if (field == "outline") "大纲" else "设定"
     val existing = details.string(field)
     var value by remember(book.id, field, existing) { mutableStateOf(existing) }
     var changedField by remember { mutableStateOf<String?>(null) }
+    var deskPage by rememberSaveable { mutableStateOf("写作") }
     val bookFileName = remember(book.title) { safeFileName(book.title) }
     Box(modifier, contentAlignment = Alignment.TopCenter) {
         Column(
@@ -221,6 +306,16 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text("工作台", style = MaterialTheme.typography.headlineSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                listOf("写作", "资料", "剧情", "配置").forEach { item ->
+                    FilterChip(deskPage == item, { deskPage = item }, label = { Text(item) })
+                }
+            }
+            when (deskPage) {
+                "资料" -> ResearchWorkspace(model, book)
+                "剧情" -> StoryScreen(model, book, openEditor)
+                "配置" -> BookSettings(model, book)
+                else -> {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("outline" to "大纲", "notes" to "设定").forEach { (key, name) ->
                     FilterChip(selected = field == key, onClick = {
@@ -237,6 +332,8 @@ private fun BookDesk(model: WriterModel, book: BookRow, modifier: Modifier) {
             Text("导出", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp))
             ExportFormat.entries.filter { it != ExportFormat.Chapter }.forEach { format ->
                 ExportButton(format, bookFileName, onDestination = { uri -> model.writeExport(uri, book.id, format, null) })
+            }
+                }
             }
         }
     }

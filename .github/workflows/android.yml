@@ -24,20 +24,16 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: ''
+      - run: sdkmanager --channel=3 'platform-tools' 'platforms;android-37.2' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '8.10.2'
-      - name: Test and build native debug APK
-        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Qingjian-Native-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          gradle-version: '9.9.2'
+      - name: Run native tests and lint
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -58,13 +54,14 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          packages: ''
+      - run: sdkmanager --channel=3 'platform-tools' 'platforms;android-37.2' 'build-tools;37.0.0'
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: '8.10.2'
+          gradle-version: '9.9.2'
           cache-disabled: true
       - name: Build and verify release APK
         shell: bash
@@ -91,7 +88,7 @@ jobs:
           version_code=$((100 + GITHUB_RUN_NUMBER))
           gradle --no-daemon --no-build-cache :app:assembleRelease "-PqingjianVersionCode=$version_code"
           apk=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/signature.txt"
           signer_count="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/{count++} END{print count+0}' "$RUNNER_TEMP/signature.txt")"
           actual="$(awk -F ': ' '/^Signer #1 certificate SHA-256 digest:/{print tolower($2)}' "$RUNNER_TEMP/signature.txt")"
           if [[ "$signer_count" != 1 || "$actual" != "$expected" ]]; then
