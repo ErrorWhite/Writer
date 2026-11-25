@@ -341,6 +341,7 @@ internal class Library(context: Context) {
         val chapter = chapterRow(bookId, volumeId, source, position)
         dao.putChapter(chapter)
         dao.selectChapter(bookId, chapter.id, System.currentTimeMillis())
+        chapter.id
     }
 
     suspend fun renameVolume(bookId: String, volumeId: String, title: String) = write {

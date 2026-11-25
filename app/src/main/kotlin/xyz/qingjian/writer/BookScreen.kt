@@ -73,6 +73,7 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
     val pages = rememberSaveableStateHolder()
     var page by rememberSaveable { mutableStateOf(BookPage.Edit) }
     var focus by rememberSaveable { mutableStateOf(false) }
+    var planChapter by rememberSaveable { mutableStateOf<String?>(null) }
     val leave: () -> Unit = {
         when {
             focus -> focus = false
@@ -106,19 +107,27 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
             } else if (wide && !focus) {
                 Row(contentModifier) {
                     Surface(Modifier.width(300.dp), color = WriterTheme.colorScheme.surface) {
-                        DirectoryScreen(model, current, Modifier.fillMaxSize()) { page = BookPage.Edit }
+                        DirectoryScreen(model, current, Modifier.fillMaxSize()) {
+                            planChapter = it
+                            page = BookPage.Edit
+                        }
                     }
                     pages.SaveableStateProvider("edit") {
-                        ChapterEditor(model, current, Modifier.weight(1f).fillMaxSize(), focus) { focus = !focus }
+                        ChapterEditor(model, current, Modifier.weight(1f).fillMaxSize(), focus,
+                            planChapter == current.activeId, { planChapter = null }) { focus = !focus }
                     }
                 }
             } else if (page == BookPage.Chapters) {
                 pages.SaveableStateProvider("chapters") {
-                    DirectoryScreen(model, current, contentModifier) { page = BookPage.Edit }
+                    DirectoryScreen(model, current, contentModifier) {
+                        planChapter = it
+                        page = BookPage.Edit
+                    }
                 }
             } else {
                 pages.SaveableStateProvider("edit") {
-                    ChapterEditor(model, current, contentModifier, focus) { focus = !focus }
+                    ChapterEditor(model, current, contentModifier, focus,
+                        planChapter == current.activeId, { planChapter = null }) { focus = !focus }
                 }
             }
         }
@@ -126,7 +135,7 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
 }
 
 @Composable
-private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifier, opened: () -> Unit) {
+private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifier, opened: (String?) -> Unit) {
     val volumes by remember(book.id) { model.library.volumes(book.id) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val chapters by remember(book.id) { model.library.directory(book.id) }
@@ -197,7 +206,7 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
                             }
                         }
                         select(book.id, chapter.id)
-                        opened()
+                        opened(null)
                     } },
                     color = if (selected) WriterTheme.colorScheme.primaryContainer else WriterTheme.colorScheme.surface,
                     shape = WriterTheme.shapes.medium
@@ -234,9 +243,28 @@ private fun DirectoryScreen(model: WriterModel, book: BookRow, modifier: Modifie
         model.perform { addVolume(book.id, name) }
     }
     newChapterVolume?.let { volume ->
-        NameDialog("新建章节", "章名", dismiss = { newChapterVolume = null }) { name ->
-            model.perform { addChapter(book.id, volume, name); opened() }
-        }
+        var title by rememberSaveable(volume) { mutableStateOf("") }
+        var plan by rememberSaveable(volume) { mutableStateOf(false) }
+        val dismiss = { newChapterVolume = null }
+        AlertDialog(
+            onDismissRequest = dismiss, title = { Text("新建章节") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(title, { title = it }, singleLine = true, label = { Text("章名") })
+                    CheckOption("用 AI 规划章节摘要", plan) { plan = it }
+                }
+            },
+            confirmButton = { TextButton(enabled = title.isNotBlank(), onClick = {
+                val name = title.trim()
+                val startPlanning = plan
+                model.perform {
+                    val chapterId = addChapter(book.id, volume, name)
+                    dismiss()
+                    opened(chapterId.takeIf { startPlanning })
+                }
+            }) { Text("创建") } },
+            dismissButton = { TextButton(onClick = dismiss) { Text("取消") } }
+        )
     }
     volumes.find { it.id == renamingVolume }?.let { volume ->
         NameDialog("更改卷名", "卷名", volume.title, dismiss = { renamingVolume = null }) { name ->

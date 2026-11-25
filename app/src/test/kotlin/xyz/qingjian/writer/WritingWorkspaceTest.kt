@@ -1,12 +1,27 @@
 package xyz.qingjian.writer
 
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WritingWorkspaceTest {
+    @Test
+    fun chapterPlanningUsesTheExplicitHandoffAndSelectedDirection() {
+        val first = Manuscript.newChapter("定稿章").put("handoff", JSONObject().put("bridge", "第一章的伏笔"))
+        val other = Manuscript.newChapter("中间章").put("handoff", JSONObject().put("bridge", "别的伏笔"))
+        val next = Manuscript.newChapter("新章").put("plan", JSONObject()
+            .put("handoffFrom", first.string("id")).put("direction", "沿河追查").put("summary", "先探查渡船"))
+        val book = Manuscript.create("测试").put("volumes", JSONArray().put(JSONObject()
+            .put("chapters", JSONArray().put(first).put(other).put(next))))
+        val context = JSONObject(writingContext(book, next, WritingIntent.Chapter, "", "").second.single().content)
+        assertEquals("沿河追查", context.getString("已选走向"))
+        assertEquals("第一章的伏笔", context.getJSONObject("上一章交接").getString("bridge"))
+        assertEquals("先探查渡船", context.getString("章节摘要"))
+    }
+
     @Test
     fun reasoningSettingsUseTheSelectedProvidersOwnWireFormat() {
         val deepseek = ProviderAccount("id", "DeepSeek", "https://api.deepseek.com/v1", ModelProtocol.Chat,

@@ -58,17 +58,19 @@ import org.json.JSONObject
 
 @Composable
 internal fun ChapterEditor(
-    model: WriterModel, book: BookRow, modifier: Modifier, focus: Boolean = false, toggleFocus: () -> Unit = {}
+    model: WriterModel, book: BookRow, modifier: Modifier, focus: Boolean = false,
+    planning: Boolean = false, planningStarted: () -> Unit = {}, toggleFocus: () -> Unit = {}
 ) {
     val chapter by remember(book.id, book.activeId) { model.library.chapter(book.id, book.activeId) }
         .collectAsStateWithLifecycle(initialValue = null)
     val row = chapter?.takeIf { it.id == book.activeId } ?: return
-    key(row.id) { ChapterBody(model, book, row, modifier, focus, toggleFocus) }
+    key(row.id) { ChapterBody(model, book, row, modifier, focus, planning, planningStarted, toggleFocus) }
 }
 
 @Composable
 private fun ChapterBody(
-    model: WriterModel, book: BookRow, chapter: ChapterRow, modifier: Modifier, focus: Boolean, toggleFocus: () -> Unit
+    model: WriterModel, book: BookRow, chapter: ChapterRow, modifier: Modifier, focus: Boolean,
+    planning: Boolean, planningStarted: () -> Unit, toggleFocus: () -> Unit
 ) {
     val draftKey = remember(chapter.bookId, chapter.id) { DraftKey(chapter.bookId, chapter.id) }
     val drafts by model.drafts.collectAsStateWithLifecycle()
@@ -118,6 +120,14 @@ private fun ChapterBody(
     var find by rememberSaveable { mutableStateOf(false) }
     var formatting by rememberSaveable { mutableStateOf(false) }
     var ai by rememberSaveable { mutableStateOf(false) }
+    var initialIntent by rememberSaveable { mutableStateOf<WritingIntent?>(null) }
+    LaunchedEffect(planning) {
+        if (planning) {
+            initialIntent = WritingIntent.Summary
+            ai = true
+            planningStarted()
+        }
+    }
     var paragraphMode by rememberSaveable { mutableStateOf(false) }
     var aiRange by remember { mutableStateOf<TextRange?>(null) }
     var pickedParagraphs by remember { mutableStateOf(setOf<Int>()) }
@@ -225,6 +235,17 @@ private fun ChapterBody(
                             pickedParagraphs = emptySet()
                             finishEditing()
                             ai = true
+                            menu = false
+                        })
+                        DropdownMenuItem("章节规划", onClick = {
+                            initialIntent = WritingIntent.Summary
+                            finishEditing()
+                            ai = true
+                            menu = false
+                        })
+                        DropdownMenuItem("整章源码", onClick = {
+                            active = null
+                            sourceMode = true
                             menu = false
                         })
                         DropdownMenuItem("逐段操作", onClick = { paragraphMode = true; menu = false })
@@ -361,7 +382,10 @@ private fun ChapterBody(
     if (details) ChapterDetails(model, chapter) { details = false }
     if (history) HistoryDialog(model, chapter) { history = false }
     if (find) FindDialog(editor, { sourceMode = true; active = null; change(it, true) }) { find = false }
-    if (ai) WritingAiDialog(model, book, chapter, aiRange ?: editor.selection, pickedParagraphs) { ai = false }
+    if (ai) WritingAiDialog(model, book, chapter, aiRange ?: editor.selection, pickedParagraphs, initialIntent) {
+        ai = false
+        initialIntent = null
+    }
     if (closeChapter) ManualHandoff(model, chapter) { closeChapter = false }
     paragraphActions?.let { index ->
         InlineParagraphActions(model, book, chapter, editor.text, index) { paragraphActions = null }

@@ -138,10 +138,13 @@ internal fun writingContext(
     if (intent == WritingIntent.Profile) required.put("作者构思", instruction.ifBlank { target })
     if (intent == WritingIntent.Close) required.put("目标段落", target)
     val plan = chapter.optJSONObject("plan")?.string("summary").orEmpty()
+    val chapterPlan = chapter.optJSONObject("plan")
+    chapterPlan?.string("direction")?.takeIf(String::isNotBlank)?.let { required.put("已选走向", it) }
     if (plan.isNotBlank()) required.put("章节摘要", plan)
     if (intent == WritingIntent.Chapter) require(plan.isNotBlank()) { "请先确认章节规划，再生成初稿。" }
     val chapters = book.records("volumes").flatMap { it.records("chapters") }
-    val previous = chapters.getOrNull(chapters.indexOfFirst { it.string("id") == chapter.string("id") } - 1)
+    val previous = chapters.firstOrNull { it.string("id") == chapterPlan?.string("handoffFrom") }
+        ?: chapters.getOrNull(chapters.indexOfFirst { it.string("id") == chapter.string("id") } - 1)
     previous?.optJSONObject("handoff")?.let { required.put("上一章交接", it) }
     val optional = linkedMapOf<String, String>()
     book.optJSONObject("aiSetup")?.let { optional["立项"] = it.toString() }
@@ -194,14 +197,16 @@ internal fun writingContext(
 @Composable
 internal fun WritingAiDialog(
     model: WriterModel, book: BookRow, chapter: ChapterRow, selection: TextRange,
-    pickedParagraphs: Set<Int>, dismiss: () -> Unit
+    pickedParagraphs: Set<Int>, initialIntent: WritingIntent? = null, dismiss: () -> Unit
 ) {
     val runId = "writing:${book.id}:${chapter.id}"
     val runs by model.generations.collectAsStateWithLifecycle()
     val run = runs[runId]
     val chapterPayload = remember(chapter.payload) { JSONObject(chapter.payload) }
     val review = chapterPayload.optJSONObject("nativeReview")
-    var intent by rememberSaveable { mutableStateOf(if (pickedParagraphs.size > 1) WritingIntent.Batch else WritingIntent.Paragraph) }
+    var intent by rememberSaveable {
+        mutableStateOf(initialIntent ?: if (pickedParagraphs.size > 1) WritingIntent.Batch else WritingIntent.Paragraph)
+    }
     var instruction by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     var change by remember(review?.string("id")) { mutableStateOf(review?.string("after").orEmpty()) }
@@ -420,6 +425,7 @@ internal fun WritingAiDialog(
                 saved.remove("nativeReview")
             }
             model.clearGeneration(runId)
+            if (accept && task == WritingIntent.Summary) intent = WritingIntent.Chapter
         }
     }
 
@@ -479,7 +485,7 @@ internal fun WritingAiDialog(
                         Text(review.string("before"), Modifier.heightIn(max = 160.dp).verticalScroll(rememberScrollState()))
                     }
                     OutlinedTextField(change, { change = it }, Modifier.fillMaxWidth(), minLines = 5,
-                        label = { Text("候选稿") })
+                        label = { Text(if (intentForReview == WritingIntent.Summary) "修改章节摘要" else "候选稿") })
                 }
             }
         },
@@ -493,8 +499,16 @@ internal fun WritingAiDialog(
             when {
                 generating -> TextButton(onClick = { model.stopGeneration(runId) }) { Text("停止") }
                 review != null -> TextButton(enabled = if (intentForReview == WritingIntent.Batch || intentForReview in evidenceIntents) selected.isNotEmpty()
-                    else change.isNotBlank(), onClick = { decide(true) }) { Text("采用") }
-                else -> TextButton(onClick = ::generate) { Text("生成候选") }
+                    else change.isNotBlank(), onClick = { decide(true) }) {
+                    Text(if (intentForReview == WritingIntent.Summary) "确认摘要" else "采用")
+                }
+                else -> TextButton(onClick = ::generate) {
+                    Text(when (intent) {
+                        WritingIntent.Summary -> "生成摘要"
+                        WritingIntent.Chapter -> "按摘要生成初稿"
+                        else -> "生成候选"
+                    })
+                }
             }
         }
     )
