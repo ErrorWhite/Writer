@@ -81,10 +81,12 @@ jobs:
           gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
           adb install app/build/outputs/apk/debug/app-x86_64-debug.apk
           adb install app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          adb logcat -c
           adb shell am instrument -w -r \
             -e class xyz.qingjian.writer.WritingFlowTest \
             io.wboat.writer.debug.test/androidx.test.runner.AndroidJUnitRunner \
             | tee "$RUNNER_TEMP/qingjian-instrumentation.log"
+          adb logcat -d -b crash -v brief | tee "$RUNNER_TEMP/qingjian-crash.log"
           adb pull /sdcard/Download/qingjian-qa "$RUNNER_TEMP/qingjian-qa" || true
           grep -Eq '^OK \([2-9][0-9]* tests\)' "$RUNNER_TEMP/qingjian-instrumentation.log"
           for name in chapter providers provider-connection provider-models; do
@@ -97,6 +99,7 @@ jobs:
           path: |
             ${{ runner.temp }}/qingjian-emulator.log
             ${{ runner.temp }}/qingjian-instrumentation.log
+            ${{ runner.temp }}/qingjian-crash.log
             ${{ runner.temp }}/qingjian-qa/
 
   signed:
