@@ -74,12 +74,12 @@ internal fun FilterChip(selected: Boolean, onClick: () -> Unit, label: String) {
 }
 
 @Composable
-internal fun WriterSearch(query: String, onQueryChange: (String) -> Unit, label: String) {
+internal fun WriterSearch(query: String, onQueryChange: (String) -> Unit, label: String, modifier: Modifier = Modifier) {
     val keyboard = LocalSoftwareKeyboardController.current
     InputField(
         query, onQueryChange, onSearch = { keyboard?.hide() },
         expanded = true, onExpandedChange = {},
-        modifier = Modifier.fillMaxWidth(), label = label, material = false
+        modifier = modifier.fillMaxWidth(), label = label, material = false
     )
 }
 

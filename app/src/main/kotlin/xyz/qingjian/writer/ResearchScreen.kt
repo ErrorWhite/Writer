@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.ChipTabRow
+import io.github.suqi8.coui.kmp.basic.EmptyState
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,18 +57,14 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
     }
     val title = section.label
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            WorkCollection.entries.forEach { item ->
-                FilterChip(selected = item == section, label = item.label, onClick = {
-                    section = item
-                    query = ""
-                })
-            }
-        }
-        Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(query, { query = it }, Modifier.weight(1f), singleLine = true, label = { Text("搜索$title") })
-            TextButton(onClick = { edit = JSONObject().put("id", newId()) }) { Text("添加$title") }
+        ChipTabRow(WorkCollection.entries.map { it.label }, section.ordinal, { index ->
+            section = WorkCollection.entries[index]
+            query = ""
+        }, modifier = Modifier.fillMaxWidth(), horizontalPadding = 0.dp)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            WriterSearch(query, { query = it }, "搜索$title", Modifier.weight(1f))
+            ToolbarTextButton(text = "添加", onClick = { edit = JSONObject().put("id", newId()) })
         }
         if (section == WorkCollection.World) Row {
             TextButton(onClick = { worldImport.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }) {
@@ -77,7 +76,7 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
             query.isBlank() || it.string("title").contains(query, ignoreCase = true) ||
                 it.string(section.body).contains(query, ignoreCase = true)
         }
-        if (filtered.isEmpty()) Text(if (query.isBlank()) "还没有$title" else "没有匹配的$title")
+        if (filtered.isEmpty()) EmptyState(title = if (query.isBlank()) "还没有$title" else "没有匹配的$title")
         filtered.forEach { item ->
             Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

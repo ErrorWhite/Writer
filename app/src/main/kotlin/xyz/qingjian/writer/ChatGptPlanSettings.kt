@@ -1,6 +1,5 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.suqi8.coui.kmp.basic.Button
 import io.github.suqi8.coui.kmp.basic.ButtonDefaults
 import io.github.suqi8.coui.kmp.basic.RadioButton
+import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
+import io.github.suqi8.coui.kmp.preference.PreferenceCategory
 
 private const val usageUrl = "https://chatgpt.com/settings/usage"
 
@@ -41,8 +43,7 @@ internal fun ChatGptPlanSettings(model: WriterModel, active: String?) {
     var disconnect by remember { mutableStateOf<PlanProfile?>(null) }
     var welcome by rememberSaveable { mutableStateOf(false) }
 
-    Text("ChatGPT 套餐", style = WriterTheme.typography.titleLarge)
-    Text("授权后，符合条件的写作与文本扮演请求使用你自己的 ChatGPT 套餐配额。")
+    if (profiles.isEmpty()) PreferenceCategory("ChatGPT 套餐")
     Button(enabled = !busy, onClick = {
         model.signInPlan(browser = uri::openUri) {
             select = it
@@ -56,30 +57,34 @@ internal fun ChatGptPlanSettings(model: WriterModel, active: String?) {
         Text("在系统浏览器完成授权后返回青简。")
         TextButton(onClick = model::cancelPlanLogin) { Text("取消登录") }
     }
-    profiles.forEach { profile ->
-        val current = active == "plan:${profile.id}"
-        Surface(shape = WriterTheme.shapes.large, color = WriterTheme.colorScheme.surface) {
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(current, {
-                    if (profile.model.isBlank()) select = profile else model.choosePlan(profile, profile.model)
-                }, enabled = profile.connected && !busy)
-                Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                    Text(profile.name, style = WriterTheme.typography.titleMedium)
-                    Text(when {
+    if (profiles.isNotEmpty()) PreferenceGroup("ChatGPT 套餐") {
+        profiles.forEach { profile ->
+            val current = active == "plan:${profile.id}"
+            item(profile.id) {
+                ArrowPreference(
+                    title = profile.name,
+                    summary = when {
                         !profile.connected -> "需要授权"
-                        current -> "正在使用 ChatGPT 套餐 · ${profile.model}"
                         else -> profile.model.ifBlank { "已授权 · 请选择模型" }
-                    }, style = WriterTheme.typography.bodySmall)
-                }
-                TextButton(enabled = !busy, onClick = {
-                    if (profile.connected) select = profile
-                    else model.signInPlan(profile.id, uri::openUri) { select = it }
-                }) { Text(if (profile.connected) "模型" else "授权") }
-                TextButton(enabled = !busy, onClick = { disconnect = profile }) { Text("管理") }
+                    },
+                    onClick = {
+                        if (profile.connected) select = profile
+                        else model.signInPlan(profile.id, uri::openUri) { select = it }
+                    },
+                    enabled = !busy,
+                    startAction = {
+                        RadioButton(current, {
+                            if (profile.model.isBlank()) select = profile else model.choosePlan(profile, profile.model)
+                        }, enabled = profile.connected && !busy)
+                    },
+                    endActions = {
+                        ToolbarTextButton(text = "管理", enabled = !busy, onClick = { disconnect = profile })
+                    }
+                )
             }
         }
+        item("usage") { ArrowPreference("管理 ChatGPT 用量", onClick = { uri.openUri(usageUrl) }) }
     }
-    if (profiles.isNotEmpty()) TextButton(onClick = { uri.openUri(usageUrl) }) { Text("管理 ChatGPT 用量") }
     select?.let { profile -> PlanModelPicker(model, profile) { select = null } }
     if (welcome) AlertDialog(
         onDismissRequest = { welcome = false }, title = { Text("ChatGPT 套餐已连接") },
@@ -129,7 +134,7 @@ private fun PlanModelPicker(model: WriterModel, profile: PlanProfile, dismiss: (
         onDismissRequest = dismiss, title = { Text("选择套餐模型") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索套餐可用模型") })
+                WriterSearch(query, { query = it }, "搜索套餐可用模型")
                 val options = entries
                 when {
                     error != null -> Text(error.orEmpty(), color = WriterTheme.colorScheme.error)

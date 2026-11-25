@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,18 +49,22 @@ internal fun CodexSettings(model: WriterModel, current: String?) {
             }
         }
     }
-    Text("青简服务器 Codex", style = WriterTheme.typography.titleLarge)
     if (status == null) {
-        OutlinedButton(onClick = { login = true }) { Text("登录青简服务器") }
-    } else {
-        Text(endpoint, style = WriterTheme.typography.bodySmall)
-        if (status?.optBoolean("codex") == true) OutlinedButton(onClick = model::useStudio) {
-            Text(if (current == STUDIO_ACCOUNT) "正在使用服务器 Codex" else "使用服务器 Codex")
+        PreferenceGroup("青简服务器") {
+            item("login") { ArrowPreference("登录青简服务器", onClick = { login = true }) }
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起账号" else "管理账号") }
-            TextButton(onClick = model::refreshStudio) { Text("刷新") }
-            TextButton(onClick = model::signOutStudio) { Text("退出服务器") }
+    } else {
+        PreferenceGroup("青简服务器") {
+            item("accounts") {
+                ArrowPreference(if (expanded) "收起 Codex 账号" else "管理 Codex 账号", summary = endpoint,
+                    onClick = { expanded = !expanded })
+            }
+            if (status?.optBoolean("codex") == true) item("choose") {
+                ArrowPreference(if (current == STUDIO_ACCOUNT) "正在使用服务器 Codex" else "使用服务器 Codex",
+                    onClick = model::useStudio)
+            }
+            item("refresh") { ArrowPreference("刷新连接状态", onClick = model::refreshStudio) }
+            item("signout") { ArrowPreference("退出服务器", onClick = model::signOutStudio) }
         }
         if (expanded) {
             if (cli?.optBoolean("installed") != true) Text("青简服务器未检测到 Codex CLI。")

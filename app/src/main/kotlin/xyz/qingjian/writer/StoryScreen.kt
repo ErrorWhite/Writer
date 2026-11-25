@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.basic.ChipTabRow
+import io.github.suqi8.coui.kmp.basic.EmptyState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,15 +32,12 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
     var direction by remember { mutableStateOf<JSONObject?>(null) }
     var undo by remember { mutableStateOf(false) }
     if (chapter == null) {
-        Text("尚无定稿章节。可在章节操作中整理定稿交接。")
+        EmptyState(title = "尚无定稿章节", subtitle = "在章节操作中整理定稿交接。")
         return
     }
     val handoff = remember(chapter.payload) { JSONObject(chapter.payload).optJSONObject("handoff") }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        entries.forEach { item ->
-            FilterChip(chapter.id == item.id, { selected = item.id }, label = item.title)
-        }
-    }
+    ChipTabRow(entries.map { it.title }, entries.indexOf(chapter).coerceAtLeast(0),
+        { selected = entries[it].id }, modifier = Modifier.fillMaxWidth(), horizontalPadding = 0.dp)
     TextButton(onClick = { model.perform { select(book.id, chapter.id); openEditor() } }) { Text("打开 ${chapter.title}") }
     if (handoff == null) {
         Text("本章还没有定稿交接。")

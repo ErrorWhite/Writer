@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import io.github.suqi8.coui.kmp.basic.Text
+import io.github.suqi8.coui.kmp.preference.ArrowPreference
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,13 +37,16 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     var templateOpen by rememberSaveable { mutableStateOf(false) }
     var gitOpen by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("创作配置", style = WriterTheme.typography.titleLarge)
-        OutlinedButton(onClick = { profileOpen = true }) { Text("作品立项与文风") }
-        OutlinedButton(onClick = { contextOpen = true }) { Text("上下文与世界书预算") }
-        OutlinedButton(onClick = { templateOpen = true }) { Text("任务提示词模板") }
-        OutlinedButton(onClick = { writingOpen = true }) { Text("写作外观与目标") }
-        OutlinedButton(onClick = { snapshotsOpen = true }) { Text("全书还原点") }
-        OutlinedButton(onClick = { gitOpen = true }) { Text("Git 版本历史") }
+        PreferenceGroup("作品配置") {
+            item("profile") { ArrowPreference("立项与文风", onClick = { profileOpen = true }) }
+            item("context") { ArrowPreference("上下文与世界书", onClick = { contextOpen = true }) }
+            item("templates") { ArrowPreference("任务提示词模板", onClick = { templateOpen = true }) }
+            item("appearance") { ArrowPreference("稿纸、分隔线与字数目标", onClick = { writingOpen = true }) }
+        }
+        PreferenceGroup("版本历史") {
+            item("snapshots") { ArrowPreference("全书还原点", onClick = { snapshotsOpen = true }) }
+            item("git") { ArrowPreference("Git 版本历史", onClick = { gitOpen = true }) }
+        }
     }
     if (profileOpen) {
         val profile = payload.optJSONObject("aiSetup") ?: JSONObject()
