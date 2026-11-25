@@ -89,6 +89,8 @@ dependencies {
     implementation 'org.snakeyaml:snakeyaml-engine:2.9'
     implementation 'org.eclipse.jgit:org.eclipse.jgit:6.10.1.202505221210-r'
     implementation 'com.nimbusds:nimbus-jose-jwt:10.10'
+    implementation 'com.google.errorprone:error_prone_annotations:2.36.0'
+    runtimeOnly 'org.slf4j:slf4j-nop:1.7.36'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20250107'
