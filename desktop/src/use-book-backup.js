@@ -1,7 +1,7 @@
 import { computed, onMounted, onUnmounted, reactive } from 'vue'
 import { readBrowserBook, readRetiredBooks, registerBrowserBook, retireBrowserBooks, writeBrowserBook } from './shelf-store.js'
 import { apiUrl } from './local-service.js'
-import { clearSnapshot, forgetSyncedBook, recoverSnapshot, rememberSyncedBook, retainSnapshot } from './book-journal.js'
+import { clearSnapshot, forgetSyncedBook, pendingSnapshots, recoverSnapshot, rememberSyncedBook, retainSnapshot } from './book-journal.js'
 import { bookSyncClient, bookSyncLinks, syncDigest, writeBookSyncLink } from './book-sync.js'
 
 export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syncChanged }) {
@@ -26,6 +26,7 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
   let inFlight
   let retry
   let pollTimer
+  let polling = false
   let retries = 0
   let stopped = false
 
@@ -33,7 +34,7 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
     writeBookSyncLink(id, link)
     if (link) links[id] = link
     else delete links[id]
-    synchronization.set(id, link ? '已同步' : '未开启同步')
+    synchronization.set(id, link?.paused ? '已暂停同步' : link ? '已同步' : '未开启同步')
   }
 
   async function localBook(id) {
@@ -94,6 +95,15 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
     const target = await sync.target()
     const capabilities = await sync.capabilities()
     if (!target || capabilities.version !== 1) throw new Error('连接的青简服务器尚未提供书稿同步。')
+    const existing = links[id]
+    if (existing?.paused && existing.target === target) {
+      setLink(id, { ...existing, paused: false })
+      const local = await localBook(id)
+      if (local) saveSoon(local)
+      await flush()
+      await pollSync()
+      return
+    }
     const result = await sync.read(id)
     const link = { target, revision: null, digest: '' }
     if (result.status === 404) {
@@ -145,17 +155,30 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
   }
 
   async function pollSync() {
-    const id = manuscript.id
-    const link = links[id]
-    if (!link || inFlight || staged.has(id) || pending.has(id)) return
+    if (polling || inFlight) return
+    polling = true
     try {
-      if (await sync.target() !== link.target) return
-      const result = await sync.read(id, link.revision)
-      if (inFlight || staged.has(id) || pending.has(id) || links[id] !== link) return
-      if (result.unchanged) return
-      if (result.status === 410 || result.ok) await adopt(id, result, link, false)
+      const target = await sync.target()
+      for (const [id, link] of Object.entries(links)) {
+        if (inFlight) break
+        if (link.paused || link.target !== target || staged.has(id) || pending.has(id)) continue
+        try {
+          const result = await sync.read(id, link.revision)
+          if (inFlight || staged.has(id) || pending.has(id) || links[id] !== link) continue
+          if (result.unchanged) {
+            synchronization.set(id, '已同步')
+            continue
+          }
+          if (result.status === 410 || result.ok) await adopt(id, result, link, false)
+          else synchronization.set(id, '等待连接')
+        } catch {
+          synchronization.set(id, '等待连接')
+        }
+      }
     } catch {
-      synchronization.set(id, '等待连接')
+      for (const [id, link] of Object.entries(links)) if (!link.paused) synchronization.set(id, '等待连接')
+    } finally {
+      polling = false
     }
   }
 
@@ -203,7 +226,7 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
       const version = crypto.randomUUID()
       const entry = { snapshot, browserSaved, version }
       pending.set(id, entry)
-      retainSnapshot(id, { snapshot, version }).then(() => {
+      retainSnapshot(id, { id, snapshot, version }).then(() => {
         entry.browserSaved = true
         if (pending.get(id) === entry && states.get(id) === 'failed') states.set(id, 'local')
       }).catch(() => {})
@@ -225,7 +248,9 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
             continue
           }
           if (!result.ok || !result.saved) throw new Error('服务器未确认保存。')
-          if (link) {
+          if (link?.paused) {
+            await rememberSyncedBook(id, write.snapshot)
+          } else if (link) {
             synchronization.set(id, '正在同步')
             await sendSync(id, write, link)
           }
@@ -270,11 +295,21 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
   }
 
   function visibility() { if (document.visibilityState === 'hidden') { checkpoint(); void flush() } }
+  async function recoverPending() {
+    for (const entry of await pendingSnapshots().catch(() => [])) {
+      const id = entry.id || JSON.parse(entry.snapshot).id
+      if (readRetiredBooks().includes(id) || staged.has(id) || pending.has(id)) continue
+      pending.set(id, { ...entry, browserSaved: true })
+    }
+    await flush()
+    await pollSync()
+  }
   onMounted(() => {
     window.addEventListener('beforeunload', beforeUnload)
     window.addEventListener('online', flush)
     document.addEventListener('visibilitychange', visibility)
     pollTimer = setInterval(pollSync, 15000)
+    recoverPending().catch(() => {})
   })
   onUnmounted(() => {
     stopped = true
@@ -287,5 +322,6 @@ export function useBookBackup(manuscript, { desktop, normalize, applyRemote, syn
     document.removeEventListener('visibilitychange', visibility)
   })
   return { state, status, saveSoon, flush, checkpoint, discard, stateFor: (id) => states.get(id),
-    links, synchronization, sync, enableSync, deleteSynced, pollSync, disableSync: id => setLink(id, null) }
+    links, synchronization, sync, enableSync, deleteSynced, pollSync,
+    disableSync: id => { if (links[id]) setLink(id, { ...links[id], paused: true }) } }
 }

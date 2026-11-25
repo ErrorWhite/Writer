@@ -25,6 +25,7 @@ async function transaction(mode, run, store = 'pending') {
 }
 
 export const retainSnapshot = (id, entry) => transaction('readwrite', store => store.put(entry, id))
+export const pendingSnapshots = () => transaction('readonly', store => store.getAll())
 export const rememberSyncedBook = (id, snapshot) => transaction('readwrite', store => store.put(snapshot, id), 'books')
 export const forgetSyncedBook = (id) => transaction('readwrite', store => store.delete(id), 'books')
 export function clearSnapshot(id, version) {

@@ -1903,8 +1903,8 @@ onUnmounted(() => {
           <el-button :loading="syncBusy" native-type="submit">连接服务器</el-button>
         </el-form>
         <div v-else class="dialog-actions">
-          <el-button v-if="syncLinks[manuscript.id]" :disabled="syncBusy" @click="configureSync('disable')">停止同步此书</el-button>
-          <el-button v-else :loading="syncBusy" @click="configureSync('enable')">同步此书</el-button>
+          <el-button v-if="syncLinks[manuscript.id] && !syncLinks[manuscript.id].paused" :disabled="syncBusy" @click="configureSync('disable')">暂停同步此书</el-button>
+          <el-button v-else :loading="syncBusy" @click="configureSync('enable')">{{ syncLinks[manuscript.id]?.paused ? '恢复同步此书' : '同步此书' }}</el-button>
           <el-button v-if="desktop" :disabled="syncBusy" @click="configureSync('sign-out')">退出服务器</el-button>
         </div>
       </template>
