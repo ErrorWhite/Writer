@@ -202,7 +202,7 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
 }
 
 @Composable
-internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Unit) {
+internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Unit, providers: () -> Unit) {
     Scaffold(containerColor = WriterTheme.colorScheme.background, topBar = { BackBar("设置", back) }) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -217,7 +217,9 @@ internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Uni
                     }
                 }
             }
-            ProviderSettings(model)
+            Card {
+                TextButton(modifier = Modifier.fillMaxWidth(), onClick = providers) { Text("模型供应商") }
+            }
         }
     }
 }

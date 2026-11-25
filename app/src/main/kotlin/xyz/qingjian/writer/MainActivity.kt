@@ -93,7 +93,10 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
                     model.perform { standaloneRoleplay(); nav.navigate("roleplay") }
                 }
             }
-            composable("settings") { SettingsScreen(model, mode) { nav.popBackStack() } }
+            composable("settings") {
+                SettingsScreen(model, mode, back = { nav.popBackStack() }, providers = { nav.navigate("providers") })
+            }
+            composable("providers") { ProvidersScreen(model) { nav.popBackStack() } }
             composable("roleplay") {
                 val workspace by remember { model.library.book(standaloneRoleplayId) }
                     .collectAsStateWithLifecycle(initialValue = null)

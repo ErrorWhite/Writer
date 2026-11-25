@@ -429,6 +429,7 @@ internal fun WritingAiDialog(
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (review == null) {
                     CurrentPlanNotice(model)
+                    ModelPicker(model)
                     TextButton(enabled = !generating, onClick = { menu = true }) { Text(intent.label) }
                     DropdownMenu(menu, { menu = false }) {
                         WritingIntent.entries.forEach { task ->

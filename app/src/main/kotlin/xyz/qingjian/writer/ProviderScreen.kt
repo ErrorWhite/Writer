@@ -3,7 +3,10 @@ package xyz.qingjian.writer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,9 +26,11 @@ import io.github.suqi8.coui.kmp.basic.RadioButton
 import io.github.suqi8.coui.kmp.basic.Switch
 import io.github.suqi8.coui.kmp.basic.Card
 import io.github.suqi8.coui.kmp.basic.CardListGroup
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
 
 @Composable
-internal fun ProviderSettings(model: WriterModel) {
+internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
     val accounts by model.accounts.collectAsStateWithLifecycle()
     val selected by model.activeAccount.collectAsStateWithLifecycle()
     val usage by model.usage.collectAsStateWithLifecycle()
@@ -34,8 +39,14 @@ internal fun ProviderSettings(model: WriterModel) {
     var showUsage by remember { mutableStateOf(false) }
     var catalog by remember { mutableStateOf<CommunityCatalog?>(null) }
     var loadingCatalog by remember { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("模型账号", style = WriterTheme.typography.titleLarge)
+    val account = edit
+    if (account != null) {
+        AccountDialog(model, account, accounts.orEmpty().any { it.id == account.id }) { edit = null }
+        return
+    }
+    Scaffold(containerColor = WriterTheme.colorScheme.background, topBar = { BackBar("模型供应商", back) }) { padding ->
+      Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()
+          .verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (!accounts.isNullOrEmpty()) Card {
             CardListGroup {
                 accounts.orEmpty().forEach { account -> item(account.id) {
@@ -67,9 +78,7 @@ internal fun ProviderSettings(model: WriterModel) {
         ChatGptPlanSettings(model, selected)
         CodexSettings(model, selected)
         CheckOption("启用 AI 配图", images, model::enableImages)
-    }
-    edit?.let { account ->
-        AccountDialog(model, account, accounts.orEmpty().any { it.id == account.id }) { edit = null }
+      }
     }
     catalog?.let { source ->
         CatalogDialog(source, dismiss = { catalog = null }) { provider, modelId ->
@@ -140,11 +149,35 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
     var status by remember { mutableStateOf("") }
     var deleting by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
-    AlertDialog(
-        onDismissRequest = dismiss,
-        title = { Text(if (exists) "编辑模型账号" else "添加模型账号") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    var tab by remember { mutableStateOf("连接") }
+    fun save() {
+        try {
+            providerHeaders(value.customHeaders)
+        } catch (error: IllegalArgumentException) {
+            status = error.localizedMessage.orEmpty()
+            return
+        }
+        model.saveAccount(value.copy(name = value.name.trim(), model = value.model.trim(), key = value.key.trim()))
+        dismiss()
+    }
+    androidx.activity.compose.BackHandler(onBack = dismiss)
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            BackBar(if (exists) account.name else "添加供应商", dismiss) {
+                TextButton(enabled = value.model.isNotBlank() && value.key.isNotBlank() && value.name.isNotBlank(),
+                    onClick = ::save) { Text("保存") }
+            }
+        }
+    ) { insets ->
+        Column(Modifier.padding(insets).consumeWindowInsets(insets).imePadding()
+            .verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("连接", "模型").forEach { item -> FilterChip(tab == item, { tab = item }, item) }
+            }
+            if (tab == "连接") Card {
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!exists) {
                     TextButton(onClick = { presets = true }) { Text("选择供应商预设") }
                     DropdownMenu(presets, { presets = false }) {
@@ -175,8 +208,6 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 OutlinedTextField(value.key, { value = value.copy(key = it) }, Modifier.fillMaxWidth(),
                     singleLine = true, password = true,
                     label = { Text(if (value.protocol == ModelProtocol.Vertex) "Google OAuth 访问令牌" else "API Key") })
-                OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(),
-                    singleLine = true, label = { Text("模型 ID") })
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("启用账号", Modifier.weight(1f))
                     Switch(checked = value.enabled, onCheckedChange = { value = value.copy(enabled = it) })
@@ -200,27 +231,30 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                 if (exists) TextButton(onClick = { deleting = true }) {
                     Text("删除账号", color = WriterTheme.colorScheme.error)
                 }
-            }
-        },
-        dismissButton = { TextButton(onClick = dismiss) { Text("取消") } },
-        confirmButton = {
-            TextButton(enabled = value.model.isNotBlank() && value.key.isNotBlank() && value.name.isNotBlank(), onClick = {
-                try {
-                    providerHeaders(value.customHeaders)
-                } catch (error: IllegalArgumentException) {
-                    status = error.localizedMessage.orEmpty()
-                    return@TextButton
+              }
+            } else Card {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(),
+                        singleLine = true, label = { Text("模型 ID") })
+                    TextButton(enabled = !connecting && value.key.isNotBlank(), onClick = {
+                        connecting = true
+                        model.listModels(value) { result ->
+                            connecting = false
+                            result.onSuccess {
+                                choices = it
+                                models = it.isNotEmpty()
+                                status = if (it.isEmpty()) "未返回模型，可直接填写 ID。" else ""
+                            }.onFailure { status = it.localizedMessage ?: "读取模型失败。" }
+                        }
+                    }) { Text(if (connecting) "正在获取…" else "从供应商获取模型") }
                 }
-                model.saveAccount(value.copy(name = value.name.trim(), model = value.model.trim(), key = value.key.trim()))
-                dismiss()
-            }) { Text("保存") }
+            }
+            if (status.isNotBlank()) Text(status, style = WriterTheme.typography.bodySmall)
         }
-    )
-    if (models) AlertDialog(
-        onDismissRequest = { models = false }, title = { Text("选择模型") },
-        text = {
+    }
+    if (models) OverlayBottomSheet(show = true, onDismissRequest = { models = false }, title = "选择模型") {
             var query by remember { mutableStateOf("") }
-            Column {
+            Column(Modifier.padding(20.dp)) {
                 OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("搜索模型") })
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     choices.asSequence().filter { it.contains(query, ignoreCase = true) }.take(60).forEach { choice ->
@@ -228,8 +262,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                     }
                 }
             }
-        }, confirmButton = { TextButton(onClick = { models = false }) { Text("关闭") } }
-    )
+    }
     if (deleting) AlertDialog(
         onDismissRequest = { deleting = false }, title = { Text("删除模型账号？") },
         confirmButton = { TextButton(onClick = { model.removeAccount(account.id); dismiss() }) { Text("删除") } },

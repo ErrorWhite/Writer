@@ -270,6 +270,7 @@ private fun RoleplayConversation(
             }
         }
         if (!running && input.isBlank()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModelPicker(model, Modifier.weight(1f))
                 if (messages.lastOrNull()?.string("role") == "user") {
                     TextButton(onClick = { request(null, false) }) { Text("继续回复") }
                 } else if (messages.any { it.string("role") == "user" }) {
