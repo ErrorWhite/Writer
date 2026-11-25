@@ -7,7 +7,7 @@
 - 离线书架与写作，支持分卷分章、查找替换、Markdown、撤销重做、专注模式、章节和全书还原点。
 - 全书 JSON 沿用青简 PC 格式。导入保留作品、卷、章、段落 ID 及扩展字段，导出另支持 Markdown、TXT 和 EPUB。
 - 创作工作台提供立项、设定、记忆、伏笔、剧情、世界书、资料附件、Skill 和写作提示词。AI 改稿保留候选及原文，采用时校验正文和结构。
-- 模型账号支持 OpenAI Responses、OpenAI Chat 兼容供应商、Anthropic Messages 和青简服务器 Codex。API 凭据在本机由 Android Keystore 保护。
+- 模型账号支持 ChatGPT 套餐、OpenAI Responses、OpenAI Chat 兼容供应商、Anthropic Messages 和青简服务器 Codex。凭据在本机由 Android Keystore 保护。
 - 文本扮演复用 Eta 角色卡、宏、角色世界书和 SSE 解析，支持酒馆 JSON/PNG、开场白、流式回复、停止、重写、会话分支与导出。
 - Git 历史记录全书快照和分文件差异，可以创建分支及恢复提交。登录青简服务器后可以下载书稿并上传独立备份副本。
 
@@ -22,6 +22,10 @@
 | Secret | `QINGJIAN_KEY_ALIAS` | 发布密钥别名 |
 | Secret | `QINGJIAN_KEY_PASSWORD` | 发布密钥口令 |
 | Variable | `QINGJIAN_CERT_SHA256` | 发布证书 SHA-256 指纹 |
+
+## ChatGPT 套餐
+
+在设置中选择 **Continue with ChatGPT**，在系统浏览器完成授权，然后从套餐可用的模型中选择。写作和文本扮演使用所选账号与模型。账号的注册编号和凭据独立保存，可重新授权或退出。青简采用 [OpenAI 开源客户端套餐授权](https://developers.openai.com/siwc/token-sharing-open-source)，复用 Eta 的本地回调与身份验证实现。
 
 ## 开源来源
 

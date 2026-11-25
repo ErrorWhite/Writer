@@ -209,6 +209,7 @@ private fun RoleplayConversation(
             }
         }
         if (run?.error != null) Text(run.error, color = MaterialTheme.colorScheme.error)
+        CurrentPlanNotice(model)
         if (running && partial == null) Text("角色正在回应…")
         if (!running) OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
             label = { Text("你要说的话") })

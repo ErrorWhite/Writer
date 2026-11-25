@@ -66,6 +66,7 @@ internal fun ProviderSettings(model: WriterModel) {
                 result.onSuccess { catalog = it }.onFailure { model.notice(it.localizedMessage ?: "读取目录失败。") }
             }
         }) { Text(if (loadingCatalog) "读取模型目录…" else "浏览社区模型目录") }
+        ChatGptPlanSettings(model, selected)
         CodexSettings(model, selected)
         CheckOption("启用 AI 配图", images, model::enableImages)
     }

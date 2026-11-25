@@ -100,14 +100,14 @@ internal class ProviderVault(context: Context) {
             }
     }
 
-    private fun seal(value: String, id: String): String {
+    internal fun seal(value: String, id: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(id.toByteArray())
         return encoder.encodeToString(cipher.iv) + "." + encoder.encodeToString(cipher.doFinal(value.toByteArray()))
     }
 
-    private fun open(value: String, id: String): String {
+    internal fun open(value: String, id: String): String {
         val (iv, encrypted) = value.split('.', limit = 2)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, decoder.decode(iv)))
@@ -168,7 +168,7 @@ internal class ModelClient {
         val input = JSONArray(messages.map { JSONObject().put("role", it.role).put("content", it.content) })
         val body = JSONObject().put("model", account.model).put("stream", true)
         when (account.protocol) {
-            ModelProtocol.Responses -> body.put("instructions", system).put("input", input)
+            ModelProtocol.Responses -> body.put("instructions", system).put("input", input).put("store", false)
             ModelProtocol.Chat -> body.put("messages", JSONArray()
                 .put(JSONObject().put("role", "system").put("content", system))
                 .apply { input.objects().forEach { put(it) } })

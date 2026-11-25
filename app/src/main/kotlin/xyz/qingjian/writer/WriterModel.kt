@@ -61,6 +61,12 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val vault = ProviderVault(application)
     private val client = ModelClient()
     private val studio = StudioServer(client)
+    private val plan = ChatGptPlan(application, vault, client)
+    private val mutablePlanProfiles = MutableStateFlow<List<PlanProfile>>(emptyList())
+    val planProfiles = mutablePlanProfiles.asStateFlow()
+    private val mutablePlanLoginBusy = MutableStateFlow(false)
+    val planLoginBusy = mutablePlanLoginBusy.asStateFlow()
+    private var planLogin: Job? = null
     private val mutableAccounts = MutableStateFlow<List<ProviderAccount>?>(null)
     val accounts = mutableAccounts.asStateFlow()
     private val selectedAccountKey = stringPreferencesKey("active_provider_account")
@@ -93,6 +99,14 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                 notice("无法读取本机模型账号。")
             }
         }
+        viewModelScope.launch {
+            try {
+                mutablePlanProfiles.value = plan.profiles()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                notice("无法读取本机 ChatGPT 订阅凭据。")
+            }
+        }
     }
 
     val theme = application.preferences.data.map { preferences ->
@@ -123,6 +137,52 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     }
 
     fun useAccount(id: String) = perform { selectAccount(id) }
+
+    fun signInPlan(profile: String? = null, browser: (String) -> Unit, connected: (PlanProfile) -> Unit) {
+        if (planLogin?.isActive == true) return
+        planLogin = viewModelScope.launch {
+            mutablePlanLoginBusy.value = true
+            try {
+                val authorized = plan.signIn(profile, browser)
+                mutablePlanProfiles.value = plan.profiles()
+                if (authorized.connected) connected(authorized)
+                else notice("ChatGPT 已登录。启用青简使用套餐权限后可发送模型请求。")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                notice(error.localizedMessage ?: "ChatGPT 订阅登录失败。")
+            } finally {
+                mutablePlanLoginBusy.value = false
+            }
+        }
+    }
+
+    fun cancelPlanLogin() { planLogin?.cancel() }
+
+    fun choosePlan(profile: PlanProfile, model: String) = perform {
+        require(profile.connected && model.isNotBlank()) { "请先授权套餐并选择模型。" }
+        plan.setModel(profile.id, model.trim())
+        mutablePlanProfiles.value = plan.profiles()
+        selectAccount("plan:${profile.id}")
+    }
+
+    fun planModels(profileId: String, complete: (Result<List<String>>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                complete(Result.success(plan.listModels(profileId)))
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                complete(Result.failure(error))
+            }
+        }
+    }
+
+    fun disconnectPlan(profile: PlanProfile, remove: Boolean) = perform {
+        if (remove) plan.remove(profile.id) else plan.disconnect(profile.id)
+        mutablePlanProfiles.value = plan.profiles()
+        if (activeAccount.value == "plan:${profile.id}") selectAccount(null)
+        notice(if (remove) "已移除订阅账号" else "已退出 ChatGPT 订阅账号")
+    }
 
     fun enableImages(enabled: Boolean) = perform { application.preferences.edit { it[imagesKey] = enabled.toString() } }
 
@@ -273,13 +333,17 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         accept: suspend Library.(String) -> Unit = {}
     ) {
         if (requests[id]?.isActive == true) return
-        val studioAddress = studioEndpoint.value.takeIf { activeAccount.value == STUDIO_ACCOUNT }
+        val selected = activeAccount.value
+        val planProfile = selected?.takeIf { it.startsWith("plan:") }?.removePrefix("plan:")?.let { id ->
+            mutablePlanProfiles.value.firstOrNull { it.id == id && it.connected }
+        }
+        val studioAddress = studioEndpoint.value.takeIf { selected == STUDIO_ACCOUNT }
         val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == activeAccount.value && it.enabled }
         if (studioAddress != null && !studio.connected(studioAddress)) {
             notice("请登录青简服务器，再使用 Codex。")
             return
         }
-        if (account == null && studioAddress == null) {
+        if (account == null && studioAddress == null && planProfile == null) {
             notice("请先在设置中启用并选中一个模型账号。")
             return
         }
@@ -296,16 +360,20 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                 val collectReasoning: (String) -> Unit = { chunk ->
                     updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) }
                 }
-                val text = if (studioAddress != null) studio.generate(studioAddress, intent, system, messages,
-                    collectText, collectReasoning) { meter = it }
-                else client.generate(requireNotNull(account), system, messages, collectText, collectReasoning) { meter = it }
+                val text = when {
+                    studioAddress != null -> studio.generate(studioAddress, intent, system, messages,
+                        collectText, collectReasoning) { meter = it }
+                    planProfile != null -> plan.generate(planProfile.id, system, messages, collectText, collectReasoning) { meter = it }
+                    else -> client.generate(requireNotNull(account), system, messages, collectText, collectReasoning) { meter = it }
+                }
                 lock.withLock {
                     flush()
                     library.accept(text)
                     meter?.let {
                         val serverModel = mutableStudioStatus.value?.optJSONObject("cli")?.string("model").orEmpty()
                         val entry = UsageEntry(java.time.LocalDate.now().toString(), intent,
-                            account?.name ?: "青简 Codex", account?.model ?: serverModel,
+                            account?.name ?: planProfile?.name ?: "青简 Codex",
+                            account?.model ?: planProfile?.model ?: serverModel,
                             it.input, it.output, it.cached)
                         val updated = (mutableUsage.value + entry).takeLast(2000)
                         withContext(Dispatchers.IO) {
