@@ -1,4 +1,4 @@
-import { createApp, h } from 'vue'
+import { createApp, defineAsyncComponent, h } from 'vue'
 import {
   ElAlert, ElButton, ElCard, ElCheckbox, ElColorPicker, ElConfigProvider, ElDialog, ElDropdown, ElDropdownItem, ElDropdownMenu,
   ElForm, ElFormItem, ElInput, ElInputNumber, ElOption, ElPopover, ElProgress, ElRadioButton, ElRadioGroup, ElSelect, ElSwitch,
@@ -35,8 +35,10 @@ import './theme.css'
 import './typography.css'
 import './controls.css'
 
+const root = import.meta.env.MODE === 'android'
+  ? defineAsyncComponent(() => import('./AndroidWorkbench.vue')) : AppGate
 const app = createApp({
-  render: () => h(ElConfigProvider, { locale: zhCn }, () => h(AppGate)),
+  render: () => h(ElConfigProvider, { locale: zhCn }, () => h(root)),
 })
 
 for (const component of [

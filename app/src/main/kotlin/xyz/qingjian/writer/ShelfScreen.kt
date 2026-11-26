@@ -171,8 +171,8 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
                 val listModifier = Modifier.widthIn(max = 980.dp).fillMaxSize()
                 val gutters = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 96.dp)
                 if (cards) LazyVerticalGrid(
-                    columns = GridCells.Adaptive(142.dp), modifier = listModifier, contentPadding = gutters,
-                    verticalArrangement = Arrangement.spacedBy(20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    columns = GridCells.Adaptive(132.dp), modifier = listModifier, contentPadding = gutters,
+                    verticalArrangement = Arrangement.spacedBy(24.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }) { tools() }
                     items(remaining, key = ShelfEntry::id) { book -> BookTile(book, true, open) }
@@ -240,13 +240,14 @@ private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
         cornerRadius = if (grid) 16.dp else 18.dp,
         colors = CardDefaults.defaultColors(color = if (grid) Color.Transparent else WriterTheme.colorScheme.surface)) {
         val details: @Composable () -> Unit = {
-            Text(book.title, style = WriterTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${book.chapterCount} 章", style = WriterTheme.typography.bodySmall,
-                color = WriterTheme.colorScheme.onSurfaceVariant)
+            Text(book.title, style = WriterTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(book.activeChapterTitle.orEmpty().ifBlank { "${book.chapterCount} 章" },
+                style = WriterTheme.typography.bodySmall, color = WriterTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (grid) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Cover(book, Modifier.fillMaxWidth().aspectRatio(0.76f))
+                Cover(book, Modifier.fillMaxWidth().aspectRatio(0.69f))
                 Column(Modifier.padding(horizontal = 3.dp, vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp)) { details() }
             }

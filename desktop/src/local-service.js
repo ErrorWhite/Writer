@@ -1,4 +1,7 @@
 import { aiActivity } from './ai-activity.js'
+import { androidCall, androidWorkbench } from './android-workbench.js'
+import { prepareRewrite, structuredIntents } from './rewrite-request.js'
+import { validateCreativeResult } from './creative-tools.js'
 
 export function apiUrl(path) {
   return new URL(`.${path}`, document.baseURI)
@@ -11,6 +14,29 @@ export async function localRequest(path, { method = 'GET', body, signal } = {}) 
   const show = patch => { if (aiActivity.id === id) Object.assign(aiActivity, patch) }
   if (activity) show({ intent: body?.intent || (stream ? 'paragraph' : 'image'), stage: '准备资料', pending: true, preview: '', summary: '' })
   try {
+    if (androidWorkbench) {
+      const url = new URL(path, document.baseURI)
+      if (url.pathname === '/api/book/versions') return androidCall('versions', {
+        chapter: url.searchParams.get('chapter'), version: url.searchParams.get('version'), create: method === 'POST',
+      }, signal)
+      if (url.pathname === '/api/ai/usage') return androidCall('usage', {}, signal)
+      if (!stream) throw new Error('请在原生工作台使用此功能。')
+      const { intent = 'paragraph', material } = body
+      const { instructions, promptMaterial } = prepareRewrite(intent, material)
+      show({ stage: '等待模型生成' })
+      const result = await androidCall('rewrite', { ...body, intent, instructions, prompt: JSON.stringify(promptMaterial) },
+        signal ?? AbortSignal.timeout(180000), (type, value) => {
+          if (type === 'stage') show({ stage: value })
+          if (type === 'delta' && !structuredIntents.has(intent)) show({ preview: (aiActivity.preview + value).slice(-1800) })
+          if (type === 'summary') show({ summary: (aiActivity.summary + value).slice(-700) })
+        })
+      if (structuredIntents.has(intent) && !Object.hasOwn(result, 'data')) {
+        result.data = validateCreativeResult(intent, result.text, material)
+        delete result.text
+      }
+      show({ stage: '已完成' })
+      return result
+    }
     const response = await fetch(apiUrl(path), {
       method, signal,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json', ...(stream && { Accept: 'application/x-ndjson' }) },

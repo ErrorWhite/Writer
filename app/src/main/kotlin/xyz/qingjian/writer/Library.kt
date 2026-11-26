@@ -515,6 +515,19 @@ internal class Library(context: Context) {
 
     suspend fun snapshotBook(bookId: String) = write { saveBookVersion(bookId) }
 
+    suspend fun snapshotChapter(bookId: String, chapterId: String) = write {
+        saveVersion(requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" })
+    }
+
+    suspend fun readBookVersion(bookId: String, versionId: Long): JSONObject =
+        JSONObject(requireNotNull(dao.bookVersion(bookId, versionId)) { "还原点已不存在。" }.snapshot)
+
+    suspend fun readChapterVersion(bookId: String, chapterId: String, versionId: Long): JSONObject {
+        val version = requireNotNull(dao.version(bookId, chapterId, versionId)) { "还原点已不存在。" }
+        return JSONObject(version.payload).put("id", chapterId).put("title", version.title)
+            .put("text", version.text).put("complete", version.complete)
+    }
+
     suspend fun restoreBook(bookId: String, id: Long) = write {
         val version = requireNotNull(dao.bookVersion(bookId, id)) { "还原点已不存在。" }
         saveBookVersion(bookId)

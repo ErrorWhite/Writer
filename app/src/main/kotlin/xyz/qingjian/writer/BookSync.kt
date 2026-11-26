@@ -188,6 +188,10 @@ private suspend fun bookDigest(book: JSONObject) = withContext(Dispatchers.Defau
     syncHash(sortedJson(value))
 }
 
+internal suspend fun workbenchRevision(book: JSONObject) = withContext(Dispatchers.Default) {
+    syncHash(sortedJson(book))
+}
+
 private fun sortedJson(value: Any?): String = when (value) {
     is JSONObject -> value.keys().asSequence().sorted().joinToString(prefix = "{", postfix = "}") { key ->
         JSONObject.quote(key) + ":" + sortedJson(value.get(key))

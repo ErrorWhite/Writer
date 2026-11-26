@@ -4,5 +4,6 @@ import { localApi } from './server/local-api.js'
 
 export default defineConfig(({ mode }) => ({
   base: './',
-  plugins: [vue(), localApi(loadEnv(mode, process.cwd(), ''))],
+  plugins: [vue(), ...(mode === 'android' ? [] : [localApi(loadEnv(mode, process.cwd(), ''))])],
+  build: mode === 'android' ? { target: 'chrome110' } : undefined,
 }))

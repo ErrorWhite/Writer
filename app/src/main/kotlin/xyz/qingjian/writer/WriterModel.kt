@@ -19,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -165,6 +166,130 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         writingPositions.edit()
             .putInt("$prefix/start", position.selectionStart).putInt("$prefix/end", position.selectionEnd)
             .putInt("$prefix/block", position.block).putInt("$prefix/offset", position.offset).apply()
+    }
+
+    suspend fun workbenchBook(bookId: String): JSONObject = lock.withLock {
+        flush()
+        checkWorkbenchDrafts(bookId)
+        val book = library.export(bookId)
+        JSONObject().put("book", book).put("revision", workbenchRevision(book))
+            .put("position", workbenchCursor(bookId, book.string("activeId")))
+    }
+
+    suspend fun saveWorkbenchBook(bookId: String, revision: String, snapshot: String): JSONObject = lock.withLock {
+        flush()
+        checkWorkbenchDrafts(bookId)
+        val incoming = withContext(Dispatchers.Default) { Manuscript.read(snapshot) }
+        require(incoming.string("id") == bookId) { "书稿编号已变更，请重新打开作品。" }
+        val current = if (library.hasBook(bookId)) library.export(bookId) else null
+        val previousRevision = current?.let { workbenchRevision(it) }
+        val incomingRevision = workbenchRevision(incoming)
+        if (incomingRevision == previousRevision) return@withLock JSONObject().put("revision", previousRevision)
+        if (previousRevision != revision) {
+            // An identical retry, including recovery after a lost reply, must reuse the same copy.
+            val copyId = "conflict-${incomingRevision.take(48)}"
+            if (!library.hasBook(copyId)) {
+                incoming.put("id", copyId).put("title", incoming.string("title") + "（同步冲突）")
+                library.store(incoming, null)
+            }
+            return@withLock JSONObject().put("conflict", true)
+        }
+        library.store(incoming, bookId)
+        JSONObject().put("revision", workbenchRevision(library.export(bookId)))
+    }
+
+    private fun checkWorkbenchDrafts(bookId: String) {
+        check(mutableDrafts.value.none { (key, draft) -> key.bookId == bookId && draft.state == SaveState.Failed }) {
+            "请在原生工作台重试保存后再继续。"
+        }
+    }
+
+    suspend fun saveWorkbenchPosition(bookId: String, chapterId: String, position: JSONObject) {
+        val key = "workbench/$bookId/$chapterId"
+        val bounded = JSONObject().put("start", position.optInt("start").coerceAtLeast(0))
+            .put("end", position.optInt("end").coerceAtLeast(0))
+            .put("top", position.optInt("top").coerceAtLeast(0))
+        withContext(Dispatchers.IO) {
+            check(writingPositions.edit().putString(key, bounded.toString()).commit()) { "无法保存写作位置。" }
+        }
+    }
+
+    fun workbenchCursor(bookId: String, chapterId: String): JSONObject {
+        val saved = writingPositions.getString("workbench/$bookId/$chapterId", null)
+        if (saved != null) return JSONObject(saved)
+        val position = writingPosition(DraftKey(bookId, chapterId))
+        return JSONObject().put("start", position.selectionStart).put("end", position.selectionEnd)
+    }
+
+    fun workbenchModelReady(selected: String?): Boolean =
+        when {
+            selected == STUDIO_ACCOUNT -> mutableStudioStatus.value != null
+            selected?.startsWith("plan:") == true ->
+                mutablePlanProfiles.value.any { it.id == selected.removePrefix("plan:") && it.connected }
+            else -> mutableAccounts.value.orEmpty().any {
+                it.id == selected && it.enabled && it.key.isNotBlank() && it.model.isNotBlank()
+            }
+        }
+
+    suspend fun rewriteInWorkbench(request: JSONObject, event: (String, String) -> Unit): JSONObject {
+        val selected = activeAccount.value
+        val intent = request.getString("intent")
+        val input = request.getJSONObject("material")
+        check(workbenchModelReady(selected)) { "请先选择一个可用的模型账号。" }
+        if (selected == STUDIO_ACCOUNT) {
+            val endpoint = studioEndpoint.value
+            check(studio.connected(endpoint)) { "请登录青简服务器，再使用 Codex。" }
+            return studio.rewrite(endpoint, JSONObject().put("provider", "codex").put("intent", intent)
+                .put("material", input).put("scripts", request.optJSONArray("scripts") ?: JSONArray())
+                .put("contextBudget", request.optInt("contextBudget", 12000)), event)
+        }
+        check((request.optJSONArray("scripts")?.length() ?: 0) == 0) { "脚本技能需要通过青简服务器执行。" }
+        val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == selected && it.enabled }
+        val profileId = selected?.takeIf { it.startsWith("plan:") }?.removePrefix("plan:")
+        val profile = mutablePlanProfiles.value.firstOrNull { it.id == profileId && it.connected }
+        val instructions = request.getString("instructions")
+        val messages = listOf(ModelMessage("user", request.getString("prompt")))
+        val onText: (String) -> Unit = { event("delta", it) }
+        val onReasoning: (String) -> Unit = { event("summary", it) }
+        var usage: ModelUsage? = null
+        val text = if (profile != null) plan.generate(profile.id, instructions, messages, onText, onReasoning) { usage = it }
+        else client.generate(requireNotNull(account), instructions, messages, onText, onReasoning) { usage = it }
+        usage?.let {
+            lock.withLock {
+                recordUsage(UsageEntry(java.time.LocalDate.now().toString(), intent,
+                    account?.name ?: profile?.name.orEmpty(), account?.model ?: profile?.model.orEmpty(),
+                    it.input, it.output, it.cached))
+            }
+        }
+        return JSONObject().put("text", text)
+    }
+
+    suspend fun workbenchVersions(bookId: String, chapter: String, version: Long?, create: Boolean): JSONObject =
+        lock.withLock {
+            flush()
+            checkWorkbenchDrafts(bookId)
+            if (version != null) return@withLock if (chapter.isBlank()) library.readBookVersion(bookId, version)
+                else library.readChapterVersion(bookId, chapter, version)
+            val entries = if (chapter.isBlank()) {
+                if (create) library.snapshotBook(bookId)
+                val title = library.book(bookId).first()?.title.orEmpty()
+                library.bookVersions(bookId).first().map { versionSummary(it.id, it.createdAt, title) }
+            } else {
+                if (create) library.snapshotChapter(bookId, chapter)
+                library.versions(bookId, chapter).first().map { versionSummary(it.id, it.createdAt, it.title) }
+            }
+            JSONObject().put("versions", JSONArray(entries))
+        }
+
+    private fun versionSummary(id: Long, at: Long, title: String) =
+        JSONObject().put("id", id.toString()).put("at", at).put("title", title)
+
+    fun workbenchUsage(): JSONObject = JSONObject().apply {
+        for ((day, entries) in usage.value.groupBy(UsageEntry::day)) {
+            put(day, JSONObject().put("requests", entries.size).put("successful", entries.size)
+                .put("input", entries.sumOf { it.input ?: 0 }).put("output", entries.sumOf { it.output ?: 0 })
+                .put("tasks", JSONObject(entries.groupingBy(UsageEntry::intent).eachCount())))
+        }
     }
 
     val theme = application.preferences.data.map { preferences ->
@@ -466,11 +591,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                             account?.name ?: planProfile?.name ?: "青简 Codex",
                             account?.model ?: planProfile?.model ?: serverModel,
                             it.input, it.output, it.cached)
-                        val updated = (mutableUsage.value + entry).takeLast(2000)
-                        withContext(Dispatchers.IO) {
-                            usageStorage.edit().putString("entries", JSONArray(updated.map(UsageEntry::json)).toString()).commit()
-                        }
-                        mutableUsage.value = updated
+                        recordUsage(entry)
                     }
                 }
                 updateGeneration(id) { it.copy(running = false, completed = true) }
@@ -483,6 +604,14 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                 requests.remove(id)
             }
         }
+    }
+
+    private suspend fun recordUsage(entry: UsageEntry) {
+        val updated = (mutableUsage.value + entry).takeLast(2000)
+        withContext(Dispatchers.IO) {
+            usageStorage.edit().putString("entries", JSONArray(updated.map(UsageEntry::json)).toString()).commit()
+        }
+        mutableUsage.value = updated
     }
 
     fun stopGeneration(id: String) { requests[id]?.cancel() }

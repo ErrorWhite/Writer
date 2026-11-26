@@ -1,0 +1,16 @@
+name: Bundle Android writing workspace
+description: Build the shared Qingjian workbench as assets for the Android APK
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: desktop/package-lock.json
+    - run: npm ci
+      shell: bash
+      working-directory: desktop
+    - run: npm run build -- --mode android --outDir ../app/build/workbench-assets/workbench
+      shell: bash
+      working-directory: desktop

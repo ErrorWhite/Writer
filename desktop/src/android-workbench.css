@@ -1,0 +1,86 @@
+.android-studio {
+  --topbar-height: 54px;
+  min-height: 0;
+}
+
+.android-studio .topbar {
+  padding-inline: 12px;
+}
+
+.android-studio .brand-home {
+  min-height: 44px;
+}
+
+.android-studio .save-state {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.android-studio .editor-width-handle,
+.android-studio .editor-scroll-track {
+  display: none;
+}
+
+.android-native-tools {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  z-index: 4;
+}
+
+.android-recovery {
+  box-sizing: border-box;
+  max-width: 30rem;
+  margin: 48px auto;
+  padding: 24px;
+}
+
+@media (max-width: 720px) {
+  .android-studio .sidebar-toggle[aria-controls="manuscript-navigation"],
+  .android-studio .knowledge-entry,
+  .android-studio .roleplay-entry {
+    display: none;
+  }
+
+  .android-studio .editor-toolbar {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .android-studio .editor-toolbar .toolbar-group {
+    flex: 0 0 auto;
+  }
+
+  .android-studio .editor-scroll-shell {
+    --paper-gutter: 0px;
+    --paper-top-gutter: 0px;
+  }
+
+  .android-studio .paper {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 24px clamp(16px, 5vw, 32px) 36px;
+  }
+
+  .android-studio .paper-scroll {
+    padding-bottom: 0;
+    overscroll-behavior-y: contain;
+  }
+
+  .android-keyboard .android-studio:has(.mobile-writing-nav) {
+    padding-bottom: 0;
+  }
+
+  .android-keyboard .android-studio .mobile-writing-nav,
+  .android-keyboard .android-studio .editor-footer {
+    display: none;
+  }
+
+  .android-keyboard .android-studio .writing {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}

@@ -58,7 +58,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-private enum class BookPage(val label: String, val icon: ImageVector) {
+internal enum class BookPage(val label: String, val icon: ImageVector) {
     Edit("写作", Icons.Default.Edit),
     Chapters("目录", Icons.Default.List),
     Desk("工作台", Icons.Default.Settings),
@@ -66,7 +66,7 @@ private enum class BookPage(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
+internal fun BookScreen(model: WriterModel, id: String, initialPage: BookPage = BookPage.Edit, back: () -> Unit) {
     val book by remember(id) { model.library.book(id) }.collectAsStateWithLifecycle(initialValue = null)
     val synchronization by model.syncStatus.collectAsStateWithLifecycle()
     LaunchedEffect(synchronization[id]) {
@@ -75,12 +75,13 @@ internal fun BookScreen(model: WriterModel, id: String, back: () -> Unit) {
     val current = book ?: return
     val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val pages = rememberSaveableStateHolder()
-    var page by rememberSaveable { mutableStateOf(BookPage.Edit) }
+    var page by rememberSaveable { mutableStateOf(initialPage) }
     var focus by rememberSaveable { mutableStateOf(false) }
     var planChapter by rememberSaveable { mutableStateOf<String?>(null) }
     val leave: () -> Unit = {
         when {
             focus -> focus = false
+            page == initialPage -> back()
             page != BookPage.Edit -> page = BookPage.Edit
             else -> back()
         }

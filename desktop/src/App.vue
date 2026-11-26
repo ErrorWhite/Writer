@@ -12,6 +12,7 @@ import { localRequest } from './local-service.js'
 import { acceptBatchReview, paragraphSpans, restoreParagraphRevision, revisionSnapshot, syncParagraphs } from './revisions.js'
 import { dividerStyles, editorDividerBlocks, generatedManuscript, insertSceneDivider } from './scene-dividers.js'
 import { useBookBackup } from './use-book-backup.js'
+import { androidCall, useAndroidBookBackup } from './android-workbench.js'
 import { bookCover, bookTitleKey, readBrowserBook, readRetiredBooks, readShelf, rememberBook, retireBrowserBooks, savedBookId, starterBookId, summarizeBook } from './shelf-store.js'
 import AiConnection from './AiConnection.vue'
 import AiSetupDialog from './AiSetupDialog.vue'
@@ -54,11 +55,14 @@ const GitTimeline = defineAsyncComponent(() => import('./GitTimeline.vue'))
 const BookImportPreview = defineAsyncComponent(() => import('./BookImportPreview.vue'))
 const CreativeDesk = defineAsyncComponent(() => import('./CreativeDesk.vue'))
 
-const props = defineProps({ sessionRequired: Boolean, desktop: Boolean, webview: Boolean, initialAccounts: { type: Object, required: true } })
-const emit = defineEmits(['sign-out', 'accounts-change'])
+const props = defineProps({
+  sessionRequired: Boolean, desktop: Boolean, webview: Boolean, android: Object,
+  initialAccounts: { type: Object, required: true },
+})
+const emit = defineEmits(['sign-out', 'accounts-change', 'android-conflict'])
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)')
-const nightMode = ref(systemTheme.matches)
-const followSystem = event => { nightMode.value = event.matches }
+const nightMode = ref(props.android?.dark ?? systemTheme.matches)
+const followSystem = event => { if (!props.android) nightMode.value = event.matches }
 systemTheme.addEventListener('change', followSystem)
 watch(nightMode, (dark) => {
   document.documentElement.classList.toggle('dark', dark)
@@ -91,11 +95,11 @@ if (props.webview) {
   })
 }
 
-const manuscript = reactive(loadManuscript(readBrowserBook(savedBookId()) || undefined))
+const manuscript = reactive(loadManuscript(props.android?.book ?? (readBrowserBook(savedBookId()) || undefined)))
 const {
   state: backupState, status: saveStatus, saveSoon, flush, checkpoint, discard, stateFor,
   links: syncLinks, synchronization, sync: studioSync, enableSync, disableSync, deleteSynced, pollSync,
-} = useBookBackup(manuscript, {
+} = props.android ? useAndroidBookBackup(manuscript, props.android) : useBookBackup(manuscript, {
   desktop: props.desktop,
   normalize: loadManuscript,
   applyRemote(id, book) {
@@ -176,7 +180,7 @@ async function windowAction(action) {
   }
   window.chrome.webview.postMessage(action)
 }
-const retiredBooks = reactive(new Set(readRetiredBooks()))
+const retiredBooks = reactive(new Set(props.android ? [] : readRetiredBooks()))
 const hasCurrentBook = ref(!retiredBooks.has(manuscript.id))
 const shelfOpen = ref(window.location.hash === '#shelf' || !hasCurrentBook.value)
 const openingBook = ref(false)
@@ -374,6 +378,7 @@ watch(() => {
 }, saveCurrentBook, { deep: true })
 watch(backupState, (state) => {
   if (state === 'deleted') retireBooks([manuscript.id])
+  if (state === 'conflict' && props.android) emit('android-conflict')
 })
 watch(autoFullscreen, (value) => {
   try { localStorage.setItem('qingjian.auto-fullscreen', value ? 'on' : 'off') } catch { /* Keep the session preference. */ }
@@ -427,6 +432,7 @@ function changeAddress(path) {
 }
 
 function showShelf(updateAddress = true) {
+  if (props.android) return androidGo('Shelf')
   roleplayOpen.value = false
   shelfOpen.value = true
   researchOpen.value = false
@@ -529,6 +535,7 @@ async function routeLocation() {
 }
 
 function openRoleplay() {
+  if (props.android) return androidGo('Roleplay')
   const from = `#book/${manuscript.id}`
   roleplayOpen.value = true
   if (window.location.hash !== from + '/roleplay') {
@@ -652,6 +659,7 @@ async function manageBook(action, book) {
 function openChapter(index, closeNavigation = true) {
   const entry = chapterEntries.value[index]
   if (!entry) return
+  if (props.android) void persistAndroidPosition().catch(() => {})
   manuscript.activeId = entry.chapter.id
   batchSelection.value = []
   pendingReview.value = null
@@ -665,6 +673,7 @@ function openChapter(index, closeNavigation = true) {
   if (manuscript.aiMode) prompt.value = ''
   previousInputAt = 0
   editorScroll.value?.scrollTo(0, 0)
+  if (props.android) void restoreAndroidChapter(entry.chapter.id)
 }
 
 function showNewChapter(volumeId = preferredVolumeId.value) {
@@ -844,7 +853,7 @@ async function backfillHandoffs() {
   const chapters = chapterEntries.value.map(entry => entry.chapter).filter(chapter => chapter.complete && !chapter.handoff?.archiveVersion && chapter.text.trim())
   if (!chapters.length) return
   const needsAi = chapters.filter(chapter => !chapter.handoff).length
-  if (needsAi && !providerReady(connection.value, preferences.provider)) { connectionOpen.value = true; return }
+  if (needsAi && !providerReady(connection.value, preferences.provider)) { openConnection(); return }
   const id = manuscript.id
   try {
     await ElMessageBox.confirm(`将为 ${chapters.length} 个旧章补齐归档，其中 ${needsAi} 章需要调用 AI 生成交接。`, '补齐旧章交接', {
@@ -946,6 +955,14 @@ async function loadBookCopy(id) {
 }
 
 async function exportManuscript(scope) {
+  if (props.android) {
+    try {
+      if (await flush() && backupState.value === 'saved') await androidCall('export', {
+        format: scope, chapter: activeChapter.value.id, title: manuscript.title,
+      })
+    } catch (error) { ElMessage.error(error.message) }
+    return
+  }
   if (scope === 'chapter') {
     downloadText(`${activeLabel.value} ${activeChapter.value.title}`, `${activeLabel.value} ${activeChapter.value.title}\n\n${activeChapter.value.text}`)
   } else {
@@ -955,6 +972,7 @@ async function exportManuscript(scope) {
 }
 
 function showResearch(tab, anchor, updateAddress = true) {
+  if (props.android) void persistAndroidPosition().catch(() => {})
   const path = `#book/${manuscript.id}`
   if (!researchOpen.value && editorScroll.value) readingPosition = {
     chapter: activeChapter.value.id, section: section.value, top: editorScroll.value.scrollTop,
@@ -1001,7 +1019,7 @@ function jumpToRevision(anchor) {
 async function saveNow() {
   saveSoon()
   await flush()
-  if (backupState.value === 'saved') ElMessage.success('浏览器与服务端备份已更新')
+  if (backupState.value === 'saved') ElMessage.success(props.android ? '已保存到本机' : '浏览器与服务端备份已更新')
 }
 
 async function signOut() {
@@ -1019,6 +1037,79 @@ function toggleAiMode() {
   else section.value = 'chapters'
   revisionJump.value = null
   editorScroll.value?.scrollTo(0, 0)
+}
+
+function openSettings() {
+  if (props.android) return androidGo('Settings')
+  settingsOpen.value = true
+}
+
+function openConnection() {
+  if (props.android) return androidGo('Providers')
+  connectionOpen.value = true
+}
+
+async function openBackup() {
+  if (props.android && !await flush()) {
+    ElMessage.error('书稿还未保存，请重试。')
+    return
+  }
+  backupTab.value = 'versions'
+  backupOpen.value = true
+}
+
+let androidLeaving = false
+let positionTimer
+function scheduleAndroidPosition() {
+  if (!props.android || section.value !== 'chapters' || researchOpen.value) return
+  clearTimeout(positionTimer)
+  positionTimer = setTimeout(() => persistAndroidPosition().catch(() => {}), 220)
+}
+
+async function persistAndroidPosition() {
+  clearTimeout(positionTimer)
+  if (section.value !== 'chapters' || researchOpen.value || !editorScroll.value) return
+  const [start, end] = editorRange() || []
+  await androidCall('savePosition', {
+    chapter: activeChapter.value.id,
+    position: { start, end, top: Math.round(editorScroll.value.scrollTop) },
+  })
+}
+
+async function restoreAndroidChapter(chapter, saved) {
+  try {
+    const position = saved ?? await androidCall('position', { chapter })
+    await nextTick()
+    if (activeChapter.value.id !== chapter || section.value !== 'chapters') return
+    const field = editor.value
+    if (field) field.setSelectionRange(position.start ?? 0, position.end ?? position.start ?? 0)
+    editorScroll.value?.scrollTo(0, position.top ?? 0)
+  } catch { /* The chapter remains editable if a reading position cannot be restored. */ }
+}
+
+async function androidGo(page) {
+  if (androidLeaving) return
+  androidLeaving = true
+  try {
+    if (!await flush()) { ElMessage.error('书稿还未保存，请重试。'); return }
+    if (backupState.value === 'conflict') return
+    await persistAndroidPosition()
+    await androidCall('navigate', { page })
+  } catch (error) { ElMessage.error(error.message) }
+  finally { androidLeaving = false }
+}
+
+function androidBack() {
+  if (dialog.value) dialog.value = ''
+  else if (backupOpen.value) backupOpen.value = false
+  else if (reviewOpen.value) reviewOpen.value = false
+  else if (profileOpen.value) profileOpen.value = false
+  else if (skillsOpen.value) skillsOpen.value = false
+  else if (focusMode.value) focusMode.value = false
+  else if (mobileNavigation.value || mobileAssistant.value) mobileNavigation.value = mobileAssistant.value = false
+  else if (researchOpen.value) leaveResearch()
+  else if (section.value !== 'chapters') showSection('chapters')
+  else void androidGo('Shelf')
 }
 
 function openProfile(only = false) {
@@ -1184,6 +1275,7 @@ function focusEditorRange(start, end = start, scroll = false) {
 function updateSelection() {
   const field = editor.value
   selection.value = field && document.activeElement === field ? [field.selectionStart, field.selectionEnd] : null
+  scheduleAndroidPosition()
 }
 
 function showDivider(block) {
@@ -1322,7 +1414,7 @@ function currentAiMaterial(intent, instruction, fields, chapter = activeChapter.
 
 async function runStudioAi(intent, getMaterial, receive) {
   if (studioBusy.value || backfill.running) return
-  if (!providerReady(connection.value, preferences.provider)) { connectionOpen.value = true; return }
+  if (!providerReady(connection.value, preferences.provider)) { openConnection(); return }
   const controller = new AbortController()
   aiController = controller
   studioBusy.value = intent
@@ -1501,10 +1593,21 @@ function shortcuts(event) {
 
 onMounted(async () => {
   if (props.desktop) studioSync.target().then(target => { syncTarget.value = target }).catch(() => {})
-  loadPreferences().catch(() => {})
+  if (!props.android) loadPreferences().catch(() => {})
   window.addEventListener('keydown', shortcuts)
   window.addEventListener('resize', updateViewport)
   window.addEventListener('hashchange', routeLocation)
+  if (props.android) {
+    if (manuscript.id !== props.android.book.id) throw new Error('书稿格式无法读取。')
+    window.qingjianBack = androidBack
+    window.qingjianTheme = dark => { nightMode.value = dark }
+    window.qingjianKeyboard = open => document.documentElement.classList.toggle('android-keyboard', open)
+    window.history.replaceState(null, '', `#book/${manuscript.id}`)
+    hydrated = true
+    await restoreAndroidChapter(activeChapter.value.id, props.android.position)
+    if (props.android.recoveredConflict) ElMessage.warning('此前未保存的编辑已恢复为冲突副本。')
+    return
+  }
   await refreshShelf()
   const recovered = hasCurrentBook.value && await recoverSnapshot(manuscript.id)
   if (recovered && recovered.id === manuscript.id) Object.assign(manuscript, loadManuscript(recovered))
@@ -1528,6 +1631,12 @@ onUnmounted(() => {
   for (const stop of chapterSaveWatches.values()) stop()
   aiController?.abort()
   backfillController?.abort()
+  if (props.android) {
+    clearTimeout(positionTimer)
+    window.qingjianBack = () => androidCall('navigate', { page: 'Shelf' }).catch(() => {})
+    delete window.qingjianTheme
+    delete window.qingjianKeyboard
+  }
   window.removeEventListener('keydown', shortcuts)
   window.removeEventListener('resize', updateViewport)
   window.removeEventListener('hashchange', routeLocation)
@@ -1535,7 +1644,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="studio" :class="{ 'focus-mode': focusMode, 'desktop-studio': desktop }">
+  <div class="studio" :class="{ 'focus-mode': focusMode, 'desktop-studio': desktop, 'android-studio': android }">
     <header class="topbar" :class="{ 'desktop-titlebar': desktop, 'webview-titlebar': webview }">
       <div class="topbar-leading">
         <button v-if="researchOpen" class="toolbar-button library-back" aria-label="返回书稿" title="返回书稿" @click="leaveResearch">
@@ -1551,7 +1660,7 @@ onUnmounted(() => {
         <button v-if="!shelfOpen && !researchOpen && !roleplayOpen" class="toolbar-button knowledge-entry" aria-label="知识库与上下文" title="知识库与上下文" @click="showResearch('context', null)"><Database :size="17" /><span>知识与上下文</span></button>
       </div>
       <div v-if="!shelfOpen" class="top-actions">
-        <button v-if="!desktop" class="icon-button" aria-label="全局设置" title="全局设置" @click="settingsOpen = true"><Settings2 :size="17" /></button>
+        <button v-if="!desktop" class="icon-button" aria-label="全局设置" title="全局设置" @click="openSettings"><Settings2 :size="17" /></button>
         <button v-if="!researchOpen" class="toolbar-button ai-mode-toggle" :class="{ 'toolbar-active': manuscript.aiMode }" aria-label="AI 驱动" title="AI 驱动" :aria-pressed="manuscript.aiMode" @click="toggleAiMode">
           <Sparkles :size="16" /><span>AI 驱动</span>
         </button>
@@ -1559,7 +1668,7 @@ onUnmounted(() => {
           <template #reference><button class="toolbar-button ai-top-progress" type="button" aria-label="AI 生成进度" :title="aiActivity.stage"><Sparkles :size="14" /><span>{{ aiIntentLabels[aiActivity.intent] || 'AI 生成' }}</span></button></template>
           <div class="assistant-progress"><strong>{{ aiActivity.stage }}</strong><div v-if="aiActivity.pending" class="ai-progress-track" /><pre v-if="aiActivity.summary || aiActivity.preview">{{ aiActivity.summary || aiActivity.preview }}</pre></div>
         </el-popover>
-        <button class="save-state" :class="{ 'save-error': !['pending', 'saved'].includes(backupState), 'save-pending': backupState === 'pending' }" :title="`保存与备份 · ${saveStatus}`" aria-label="保存与备份" @click="backupTab = 'versions'; backupOpen = true">
+        <button class="save-state" :class="{ 'save-error': !['pending', 'saved'].includes(backupState), 'save-pending': backupState === 'pending' }" :title="`保存与备份 · ${saveStatus}`" aria-label="保存与备份" @click="openBackup">
           <CircleCheck v-if="['pending', 'saved'].includes(backupState)" :size="16" /><CloudAlert v-else :size="16" /><span role="status">{{ saveStatus }}</span>
         </button>
         <el-dropdown v-if="!researchOpen" trigger="click" placement="bottom-end" @command="exportManuscript">
@@ -1599,19 +1708,19 @@ onUnmounted(() => {
       @jump="creativeJump">
       <template #cards><CreativeDesk inline tab="cards" :book="manuscript" :chapter="activeChapter" :chapters="chapterEntries" :connection="connection" :flush="flush" @jump="creativeJump" /></template>
       <template #assets><AssetLibrary :book="manuscript" :chapters="chapterEntries" @jump="creativeJump" /></template>
-      <template #ai><LibraryAi :book="manuscript" :chapters="chapterEntries" :connection="connection" @connection="connectionOpen = true" /></template>
+      <template #ai><LibraryAi :book="manuscript" :chapters="chapterEntries" :connection="connection" @connection="openConnection" /></template>
       <template #world><WorldBook :book="manuscript" :chapter="activeChapter" /></template>
-      <template #context><ContextDialog inline :book="manuscript" :chapter="activeChapter" :chapters="chapterEntries" :connection="connection" @connection="connectionOpen = true">
+      <template #context><ContextDialog inline :book="manuscript" :chapter="activeChapter" :chapters="chapterEntries" :connection="connection" @connection="openConnection">
         <template #actions><el-button :icon="PenLine" @click="openProfile(true)">创作设定与 AI 填写</el-button></template>
       </ContextDialog></template>
       <template #usage><UsageHeatmap /></template>
       <template #story><StoryDesk :book="manuscript" :chapters="chapterEntries" :backfill="backfill"
         @jump="creativeJump" @next="showNextChapter" @backfill="backfillHandoffs" @cancel-backfill="backfillController?.abort()" @confirm-link="confirmStoryLink" /></template>
       <template #creative="{ tab }"><CreativeDesk :key="tab + activeChapter.id" inline :tab="tab" :book="manuscript" :chapter="activeChapter" :chapters="chapterEntries" :connection="connection"
-        :flush="flush" @jump="creativeJump" @profile="openProfile(true)" @connection="connectionOpen = true" @apply-draft="applyCreativeDraft" @restore-chapter="restoreChapterVersion" /></template>
+        :flush="flush" @jump="creativeJump" @profile="openProfile(true)" @connection="openConnection" @apply-draft="applyCreativeDraft" @restore-chapter="restoreChapterVersion" /></template>
     </ResearchDrawer>
     <RoleplayRoom v-if="roleplayOpen && !shelfOpen" :key="manuscript.id" :book="manuscript" :connection="connection"
-      @close="leaveRoleplay" @connection="connectionOpen = true" />
+      @close="leaveRoleplay" @connection="openConnection" />
     <div v-if="!shelfOpen" v-show="!researchOpen && !roleplayOpen" class="workspace workspace-open" :class="{ 'navigation-hidden': !navigationVisible, 'assistant-hidden': !assistantVisible }">
       <Transition name="sidebar-scrim">
         <button v-if="mobileNavigation || (assistantAiMode && mobileAssistant)" class="mobile-overlay" aria-label="关闭侧栏" @click="mobileNavigation = false; mobileAssistant = false"></button>
@@ -1765,7 +1874,7 @@ onUnmounted(() => {
         </div>
 
         <div class="editor-scroll-shell" :style="{ '--manuscript-width': `${paperWidth}px` }">
-        <div id="manuscript-scroll" ref="editorScroll" class="paper-scroll">
+        <div id="manuscript-scroll" ref="editorScroll" class="paper-scroll" @scroll.passive="scheduleAndroidPosition">
           <article id="manuscript-paper" :key="section" class="paper section-enter" :class="`paper-${manuscript.paper}`" :style="{ '--manuscript-font-size': `${manuscript.fontSize}px` }"
             @click="clickParagraph" @pointerdown="startParagraphDrag" @pointerup="endParagraphDrag" @pointercancel="paragraphDrag = null">
             <template v-if="section === 'chapters'">
@@ -1787,7 +1896,7 @@ onUnmounted(() => {
               <AiWorkspace v-if="manuscript.aiMode" ref="aiEditor" :book="manuscript" :chapter="activeChapter" :chapters="chapterEntries" :connection="connection" :jump-to="revisionJump"
                 :assistant-visible="assistantVisible && !focusMode"
                 :batch-selection="batchSelection" :paused="connectionOpen || profileOpen || researchOpen || skillsOpen || backupOpen || reviewOpen || Boolean(studioBusy) || Boolean(dialog)"
-                @connection="connectionOpen = true" @profile="openProfile()" @skills="skillsOpen = true" @research="showResearch" @mutation="recordRevision"
+                @connection="openConnection" @profile="openProfile()" @skills="skillsOpen = true" @research="showResearch" @mutation="recordRevision"
                 @next-chapter="showNextChapter" @creative="showCreative" @compare="openComparison" />
               <InlineManuscript v-else-if="showInlineMarkup" :key="activeChapter.id" ref="inlineEditor" :source="activeMarkdown" :blocks="activeMarkup"
                 label="章节正文" manuscript :divider-style="manuscript.dividerStyle" @edit="editDocument" />
@@ -1857,7 +1966,7 @@ onUnmounted(() => {
                 <button class="tool-button" @click="openProfile(true)"><PenLine :size="16" />创作设定</button>
               </div>
               <div class="assistant-secondary">
-                <button class="text-action" @click="connectionOpen = true">AI 服务</button>
+                <button class="text-action" @click="openConnection">AI 服务</button>
                 <button class="text-action" @click="showNextChapter"><FilePlus :size="15" />新建下一章</button>
               </div>
             </section>
@@ -1878,23 +1987,29 @@ onUnmounted(() => {
       <button type="button" @click="showResearch('context', null)"><Database :size="18" />工作台</button>
       <button type="button" @click="openRoleplay"><MessageCircle :size="18" />文本扮演</button>
     </nav>
+    <div v-if="android && researchOpen" class="android-native-tools">
+      <el-button @click="androidGo('Desk')">原生工作台</el-button>
+      <el-button @click="openConnection">模型供应商</el-button>
+    </div>
     <AiConnection v-model:open="connectionOpen" :info="connection" @status="emit('accounts-change', $event)" />
     <StudioSettings v-model:open="settingsOpen" v-model:auto-fullscreen="autoFullscreen" :desktop="desktop" @accounts="connectionOpen = true" />
     <FullscreenReview v-if="reviewOpen && activeReview" :review="activeReview" @close="reviewOpen = false" @apply="applyComparison" @reject="rejectComparison" />
     <ImageStudio v-if="imageOpen && preferences.images" v-model:open="imageOpen" :book="manuscript" :chapter="activeChapter" />
     <AiSetupDialog v-model:open="profileOpen" :book="manuscript" :chapters="chapterEntries" :connection="connection" :profile-only="profileOnly"
-      @configured="applyProfile" @connection="connectionOpen = true" @references="profileOpen = false; showCreative('references')" />
+      @configured="applyProfile" @connection="openConnection" @references="profileOpen = false; showCreative('references')" />
     <SkillLibrary v-model:open="skillsOpen" :book="manuscript" :chapter="activeChapter" />
 
     <el-dialog v-model="backupOpen" title="保存与备份" :width="backupTab === 'git' ? 'min(930px, 94vw)' : 'min(470px, 94vw)'">
       <strong class="backup-result" :class="backupState">{{ saveStatus }}</strong>
-      <p v-if="desktop" class="dialog-description">书稿和还原点保存在此电脑的青简数据目录。可以下载全书 JSON 另存一份。</p>
+      <p v-if="android" class="dialog-description">书稿与还原点保存在本机。</p>
+      <p v-else-if="desktop" class="dialog-description">书稿和还原点保存在此电脑的青简数据目录。可以下载全书 JSON 另存一份。</p>
       <template v-else>
         <p class="dialog-description">修改会先写入当前浏览器，再保存到本地服务。</p>
         <p class="dialog-description">浏览器备份仅保留在当前浏览器，清理网站数据会丢失。</p>
       </template>
-      <div class="dialog-actions"><el-button @click="saveNow">立即保存</el-button><el-button :icon="ArrowDownToLine" type="primary" @click="downloadBookBackup(manuscript)">下载全书 JSON</el-button></div>
-      <template v-if="!webview">
+      <div class="dialog-actions"><el-button @click="saveNow">立即保存</el-button><el-button :icon="ArrowDownToLine" type="primary" @click="android ? exportManuscript('book-json') : downloadBookBackup(manuscript)">导出全书 JSON</el-button></div>
+      <div v-if="android" class="dialog-actions"><el-button @click="androidGo('Native')">跨端同步与 Git</el-button></div>
+      <template v-else-if="!webview">
         <p class="dialog-description">跨端同步 · {{ synchronization.get(manuscript.id) || (syncLinks[manuscript.id] ? '等待同步' : '未开启') }}</p>
         <el-form v-if="desktop && !syncTarget" label-position="top" @submit.prevent="configureSync('sign-in')">
           <el-form-item label="青简服务器 HTTPS 地址"><el-input v-model="syncEndpoint" /></el-form-item>
@@ -1908,7 +2023,7 @@ onUnmounted(() => {
           <el-button v-if="desktop" :disabled="syncBusy" @click="configureSync('sign-out')">退出服务器</el-button>
         </div>
       </template>
-      <nav class="resource-tabs backup-tabs" aria-label="备份方式">
+      <nav v-if="!android" class="resource-tabs backup-tabs" aria-label="备份方式">
         <button :aria-pressed="backupTab === 'versions'" @click="backupTab = 'versions'">全书还原点</button>
         <button :aria-pressed="backupTab === 'git'" @click="backupTab = 'git'">Git 时间线</button>
       </nav>

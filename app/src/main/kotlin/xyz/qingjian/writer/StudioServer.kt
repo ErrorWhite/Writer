@@ -148,47 +148,54 @@ internal class StudioServer(
         }
         val data = JSONObject().put("provider", "codex").put("intent", intent).put("material", material)
         if (scripts.isNotEmpty()) data.put("scripts", JSONArray(scripts))
+        val streamed = StringBuilder()
+        val value = rewrite(endpoint, data) { type, fragment ->
+            when (type) {
+                "delta" -> {
+                    streamed.append(fragment)
+                    text(fragment)
+                }
+                "summary" -> reasoning(fragment)
+            }
+        }
+        val meter = value.optJSONObject("usage")
+        usage(ModelUsage(
+            (meter?.opt("input") as? Number)?.toInt(),
+            (meter?.opt("output") as? Number)?.toInt(),
+            (meter?.opt("cached") as? Number)?.toInt()
+        ))
+        val structured = value.opt("data")
+        return when {
+            intent == "batch" && structured is JSONArray -> JSONArray(structured.objects().map {
+                JSONObject().put("id", it.string("paragraphId")).put("after", it.string("text"))
+            }).toString()
+            structured is JSONArray -> JSONObject().put("items", structured).toString()
+            structured is JSONObject -> structured.toString()
+            else -> value.string("text").ifBlank { streamed.toString() }
+        }.ifBlank { error("服务器未返回生成结果。") }
+    }
+
+    suspend fun rewrite(endpoint: String, data: JSONObject, event: (String, String) -> Unit): JSONObject {
         val request = request(endpoint, "api/ai/rewrite", data).newBuilder()
             .header("Accept", "application/x-ndjson").build()
         return client.execute(request) { response, active ->
-            val streamed = StringBuilder()
-            var result: String? = null
+            var result: JSONObject? = null
             requireNotNull(response.body).charStream().buffered().useLines { lines ->
                 for (line in lines) {
                     active()
                     if (line.isBlank()) continue
                     val frame = JSONObject(line)
                     when (frame.string("type")) {
-                        "delta" -> {
-                            val fragment = frame.string("text")
-                            streamed.append(fragment)
-                            text(fragment)
-                        }
-                        "summary" -> reasoning(frame.string("text"))
+                        "delta", "summary", "stage" -> event(frame.string("type"), frame.string("text"))
                         "error" -> error(frame.string("message", "青简服务器中止了请求。"))
                         "result" -> {
-                            val value = frame.getJSONObject("value")
-                            val meter = value.optJSONObject("usage")
-                            usage(ModelUsage(
-                                (meter?.opt("input") as? Number)?.toInt(),
-                                (meter?.opt("output") as? Number)?.toInt(),
-                                (meter?.opt("cached") as? Number)?.toInt()
-                            ))
-                            val structured = value.opt("data")
-                            result = when {
-                                intent == "batch" && structured is JSONArray -> JSONArray(structured.objects().map {
-                                    JSONObject().put("id", it.string("paragraphId")).put("after", it.string("text"))
-                                }).toString()
-                                structured is JSONArray -> JSONObject().put("items", structured).toString()
-                                structured is JSONObject -> structured.toString()
-                                else -> value.string("text").ifBlank { streamed.toString() }
-                            }
+                            result = frame.getJSONObject("value")
                             break
                         }
                     }
                 }
             }
-            result?.takeIf(String::isNotBlank) ?: error("服务器流提前结束，尚未收到最终结果。")
+            result ?: error("服务器流提前结束，尚未收到最终结果。")
         }
     }
 

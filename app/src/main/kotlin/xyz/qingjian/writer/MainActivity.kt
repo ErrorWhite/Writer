@@ -66,13 +66,13 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            QingjianTheme(dark) { WriterApp(model, mode) }
+            QingjianTheme(dark) { WriterApp(model, mode, dark) }
         }
     }
 }
 
 @Composable
-private fun WriterApp(model: WriterModel, mode: ThemeMode) {
+private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean) {
     val nav = rememberNavController()
     val notice by model.notice.collectAsStateWithLifecycle()
     val preview by model.importPreview.collectAsStateWithLifecycle()
@@ -107,7 +107,30 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode) {
                 }
             }
             composable("book/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
-                BookScreen(model, requireNotNull(it.arguments?.getString("id"))) { nav.popBackStack() }
+                val id = requireNotNull(it.arguments?.getString("id"))
+                SharedWorkbench(model, id, dark) { page ->
+                    when (page) {
+                        WorkbenchPage.Shelf -> nav.popBackStack("shelf", false)
+                        WorkbenchPage.Settings -> nav.navigate("settings")
+                        WorkbenchPage.Providers -> nav.navigate("providers")
+                        WorkbenchPage.Native, WorkbenchPage.Desk, WorkbenchPage.Roleplay -> {
+                            val initial = when (page) {
+                                WorkbenchPage.Desk -> BookPage.Desk
+                                WorkbenchPage.Roleplay -> BookPage.Roleplay
+                                else -> BookPage.Edit
+                            }
+                            nav.navigate("native-book/${Uri.encode(id)}/${initial.name}")
+                        }
+                    }
+                }
+            }
+            composable("native-book/{id}/{page}", arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("page") { type = NavType.StringType }
+            )) {
+                val id = requireNotNull(it.arguments?.getString("id"))
+                val page = BookPage.valueOf(requireNotNull(it.arguments?.getString("page")))
+                BookScreen(model, id, page) { nav.popBackStack() }
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))

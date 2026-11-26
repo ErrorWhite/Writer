@@ -1,0 +1,254 @@
+package xyz.qingjian.writer
+
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.webkit.WebResourceErrorCompat
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewClientCompat
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import io.github.suqi8.coui.kmp.basic.Scaffold
+import io.github.suqi8.coui.kmp.basic.Text
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
+
+private const val workbenchOrigin = "https://appassets.androidplatform.net"
+private const val workbenchPath = "/assets/workbench/index.html"
+private const val workbenchBridge = "QingjianWorkbench"
+
+internal enum class WorkbenchPage {
+    Shelf, Settings, Providers, Native, Desk, Roleplay
+}
+
+@Composable
+private fun WorkbenchLoading(padding: PaddingValues, error: String?, openNative: () -> Unit) {
+    Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(error ?: "正在打开书稿…", color = WriterTheme.colorScheme.onBackground)
+            if (error != null) TextButton(onClick = openNative) { Text("用原生编辑器打开") }
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+internal fun SharedWorkbench(
+    model: WriterModel,
+    bookId: String,
+    dark: Boolean,
+    navigate: (WorkbenchPage) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val account by model.activeAccount.collectAsStateWithLifecycle()
+    val providers by model.accounts.collectAsStateWithLifecycle()
+    val profiles by model.planProfiles.collectAsStateWithLifecycle()
+    val studio by model.studioStatus.collectAsStateWithLifecycle()
+    val background = WriterTheme.colorScheme.background.toArgb()
+    var view by remember { mutableStateOf<WebView?>(null) }
+    var ready by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    var exportFormat by rememberSaveable { mutableStateOf<String?>(null) }
+    var exportChapter by rememberSaveable { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val format = exportFormat?.let(ExportFormat::valueOf)
+        val uri = result.data?.data
+        if (format != null && uri != null) model.writeExport(uri, bookId, format, exportChapter)
+        exportFormat = null
+        exportChapter = null
+    }
+    val supported = remember { WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) }
+    LaunchedEffect(view, ready, failed) {
+        if (view != null && !ready && failed == null) {
+            delay(15_000)
+            failed = "写作工作区启动超时。"
+        }
+    }
+    LaunchedEffect(dark, ready) {
+        if (ready) view?.evaluateJavascript("window.qingjianTheme?.($dark)", null)
+    }
+    LaunchedEffect(keyboard, ready) {
+        if (ready) view?.evaluateJavascript("window.qingjianKeyboard?.($keyboard)", null)
+    }
+    LaunchedEffect(ready, account, providers, profiles, studio) {
+        val configured = model.workbenchModelReady(account)
+        if (ready) view?.evaluateJavascript("window.qingjianModels?.($configured)", null)
+    }
+    BackHandler(enabled = !keyboard) {
+        if (ready && failed == null) {
+            view?.evaluateJavascript("window.qingjianBack?.()", null)
+        } else navigate(WorkbenchPage.Shelf)
+    }
+    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+        if (supported && failed == null) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    val loader = WebViewAssetLoader.Builder()
+                        .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+                        .build()
+                    WebView(context).apply {
+                        val requests = mutableMapOf<String, Job>()
+                        setBackgroundColor(background)
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = false
+                        settings.javaScriptCanOpenWindowsAutomatically = false
+                        webViewClient = object : WebViewClientCompat() {
+                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                                !request.isForMainFrame || request.url.toString().substringBefore('#') != workbenchOrigin + workbenchPath
+
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
+                                val url = request.url
+                                if (url.scheme == "https" && url.host == "appassets.androidplatform.net" &&
+                                    url.path.orEmpty().startsWith("/assets/workbench/") && request.method == "GET") {
+                                    loader.shouldInterceptRequest(url)?.let { return it }
+                                }
+                                return WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(),
+                                    ByteArrayInputStream(byteArrayOf()))
+                            }
+
+                            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceErrorCompat) {
+                                if (request.isForMainFrame) failed = "无法加载写作工作区。"
+                            }
+                        }
+                        WebViewCompat.addWebMessageListener(this, workbenchBridge, setOf(workbenchOrigin)) {
+                                _, message, _, mainFrame, reply ->
+                            if (!mainFrame) return@addWebMessageListener
+                            val input = runCatching { JSONObject(message.data ?: "") }.getOrNull()
+                                ?: return@addWebMessageListener
+                            val operation = input.string("operation")
+                            if (operation == "cancel") {
+                                requests.remove(input.string("id"))?.cancel()
+                                return@addWebMessageListener
+                            }
+                            val requestId = input.string("id")
+                            if (requestId.isBlank() || requests.containsKey(requestId)) return@addWebMessageListener
+                            val job = scope.launch(start = CoroutineStart.LAZY) {
+                                val response = JSONObject().put("id", requestId)
+                                try {
+                                    val argument = input.optJSONObject("argument") ?: JSONObject()
+                                    val result = when (operation) {
+                                        "book" -> model.workbenchBook(bookId).put("dark", dark)
+                                        "save" -> model.saveWorkbenchBook(bookId, argument.getString("revision"),
+                                            argument.getString("snapshot"))
+                                        "position" -> model.workbenchCursor(bookId, argument.getString("chapter"))
+                                        "savePosition" -> model.saveWorkbenchPosition(bookId, argument.getString("chapter"),
+                                            argument.getJSONObject("position")).let { JSONObject() }
+                                        "export" -> {
+                                            val format = when (argument.getString("format")) {
+                                                "chapter" -> ExportFormat.Chapter
+                                                "book-json" -> ExportFormat.Json
+                                                "book-md" -> ExportFormat.Markdown
+                                                "book-txt" -> ExportFormat.Text
+                                                "book-epub" -> ExportFormat.Epub
+                                                else -> error("不支持的导出格式。")
+                                            }
+                                            exportFormat = format.name
+                                            exportChapter = argument.string("chapter").takeIf { format == ExportFormat.Chapter }
+                                            val title = argument.string("title").map { if (it in "/\\:*?\"<>|") '_' else it }
+                                                .joinToString("").take(80).ifBlank { "青简书稿" }
+                                            exportLauncher.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                                                addCategory(Intent.CATEGORY_OPENABLE)
+                                                type = format.mime
+                                                putExtra(Intent.EXTRA_TITLE, "$title.${format.extension}")
+                                            })
+                                            JSONObject()
+                                        }
+                                        "rewrite" -> model.rewriteInWorkbench(argument) { type, text ->
+                                            scope.launch {
+                                                if (view === this@apply && requests.containsKey(requestId)) {
+                                                    reply.postMessage(JSONObject().put("id", requestId)
+                                                        .put("event", type).put("text", text).toString())
+                                                }
+                                            }
+                                        }
+                                        "versions" -> model.workbenchVersions(bookId, argument.string("chapter"),
+                                            argument.string("version").toLongOrNull(), argument.optBoolean("create"))
+                                        "usage" -> model.workbenchUsage()
+                                        "ready" -> JSONObject().also { ready = true }
+                                        "failure" -> JSONObject().also { failed = "无法打开写作工作区。" }
+                                        "navigate" -> {
+                                            val page = WorkbenchPage.valueOf(argument.getString("page"))
+                                            reply.postMessage(response.put("result", JSONObject()).toString())
+                                            navigate(page)
+                                            return@launch
+                                        }
+                                        else -> error("写作工作区操作不可用。")
+                                    }
+                                    response.put("result", result)
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Exception) {
+                                    response.put("error", error.localizedMessage ?: "操作失败。")
+                                } finally {
+                                    requests.remove(requestId)
+                                }
+                                if (view === this@apply) reply.postMessage(response.toString())
+                            }
+                            requests[requestId] = job
+                            job.start()
+                        }
+                        view = this
+                        loadUrl(workbenchOrigin + workbenchPath)
+                    }
+                },
+                onRelease = { released ->
+                    if (view === released) view = null
+                    ready = false
+                    WebViewCompat.removeWebMessageListener(released, workbenchBridge)
+                    released.stopLoading()
+                    released.destroy()
+                }
+            )
+        }
+        if (!ready || failed != null) {
+            Scaffold(
+                containerColor = WriterTheme.colorScheme.background,
+                topBar = { BackBar("写作", { navigate(WorkbenchPage.Shelf) }) }
+            ) { padding ->
+                WorkbenchLoading(padding, failed ?: if (supported) null else "此设备的 WebView 需要更新。") {
+                    navigate(WorkbenchPage.Native)
+                }
+            }
+        }
+    }
+}
