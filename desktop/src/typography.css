@@ -1,11 +1,3 @@
-@font-face {
-  font-family: "Source Han Serif";
-  src: url("./fonts/SourceHanSerifCN-VF.woff2") format("woff2");
-  font-weight: 250 900;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   --title-font: "Source Han Serif", "Source Han Serif SC", "Noto Serif SC", "Songti SC", SimSun, serif;
   --page-width: 1180px;

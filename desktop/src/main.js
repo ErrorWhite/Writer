@@ -32,6 +32,7 @@ import 'element-plus/theme-chalk/dark/css-vars.css'
 import './night.css'
 import './library.css'
 import './theme.css'
+import '@title-font'
 import './typography.css'
 import './controls.css'
 

@@ -164,6 +164,9 @@ internal fun SharedWorkbench(
                                 val url = request.url
                                 if (url.scheme == "https" && url.host == "appassets.androidplatform.net" &&
                                     url.path.orEmpty().startsWith("/assets/workbench/") && request.method == "GET") {
+                                    if (url.path == "/assets/workbench/android-serif.otf") {
+                                        return WebResourceResponse("font/otf", null, resources.openRawResource(R.font.source_han_serif_sc))
+                                    }
                                     loader.shouldInterceptRequest(url)?.let { return it }
                                 }
                                 return WebResourceResponse("text/plain", "UTF-8", 403, "Forbidden", emptyMap(),

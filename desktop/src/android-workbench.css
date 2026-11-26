@@ -76,12 +76,15 @@ body,
 
   .android-studio .editor-toolbar {
     display: flex;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
     overflow-x: auto;
     scrollbar-width: none;
   }
 
   .android-studio .editor-toolbar .toolbar-group {
     flex: 0 0 auto;
+    flex-wrap: nowrap;
   }
 
   .android-studio .editor-scroll-shell {
