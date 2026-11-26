@@ -76,6 +76,12 @@ class WritingFlowTest {
                 requireNotNull(device.wait(Until.findObject(By.text("云端写作验收")), 15_000)).click()
                 waitForScript(scenario, "$chapterEditor?.value === ${JSONObject.quote(original)}")
                 checkEditorVisible(scenario)
+                evaluate(scenario, """
+                    document.fonts.load('650 16px "Source Han Serif"').then(faces => {
+                      document.body.dataset.titleFontReady = String(faces.some(face => face.status === 'loaded'));
+                    });
+                """.trimIndent())
+                waitForScript(scenario, "document.body.dataset.titleFontReady === 'true'")
                 replaceBody(scenario, rewritten)
                 waitForScript(scenario, "document.querySelector('.save-state [role=status]')?.textContent === '已保存'")
                 runBlocking {

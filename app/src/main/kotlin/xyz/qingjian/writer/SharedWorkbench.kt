@@ -165,7 +165,7 @@ internal fun SharedWorkbench(
                                 if (url.scheme == "https" && url.host == "appassets.androidplatform.net" &&
                                     url.path.orEmpty().startsWith("/assets/workbench/") && request.method == "GET") {
                                     if (url.path == "/assets/workbench/android-serif.otf") {
-                                        return WebResourceResponse("font/otf", null, resources.openRawResource(R.font.source_han_serif_sc))
+                                        return workbenchTypeface()
                                     }
                                     loader.shouldInterceptRequest(url)?.let { return it }
                                 }
@@ -295,6 +295,11 @@ internal fun SharedWorkbench(
 }
 
 private fun WebView.viewportHeight(): Int = (height / resources.displayMetrics.density).toInt()
+
+// Read the bundled OTF file directly so Compose and the WebView share the same APK resource.
+@SuppressLint("ResourceType")
+private fun WebView.workbenchTypeface() =
+    WebResourceResponse("font/otf", null, resources.openRawResource(R.font.source_han_serif_sc))
 
 private fun WebView.updateWorkbenchHeight() {
     val availableHeight = viewportHeight()
