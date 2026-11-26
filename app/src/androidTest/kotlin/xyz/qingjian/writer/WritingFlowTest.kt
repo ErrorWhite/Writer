@@ -75,16 +75,19 @@ class WritingFlowTest {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 requireNotNull(device.wait(Until.findObject(By.text("云端写作验收")), 15_000)).click()
                 waitForScript(scenario, "$chapterEditor?.value === ${JSONObject.quote(original)}")
+                checkEditorVisible(scenario)
                 replaceBody(scenario, rewritten)
                 waitForScript(scenario, "document.querySelector('.save-state [role=status]')?.textContent === '已保存'")
                 runBlocking {
                     assertEquals(rewritten, chapterText(library, bookId))
                 }
+                device.waitForIdle()
                 screenshot(device, "chapter")
                 evaluate(scenario, "document.querySelector('.mobile-writing-nav button:nth-child(2)').click()")
                 waitForScript(scenario, "document.querySelector('.navigation')?.classList.contains('mobile-open')")
                 evaluate(scenario, "Array.from(document.querySelectorAll('.chapter-button')).find(button => button.title.includes('第二章')).click()")
                 waitForScript(scenario, "$chapterEditor?.value === '次日清晨。'")
+                checkEditorVisible(scenario)
                 waitForScript(scenario, "document.querySelector('.save-state [role=status]')?.textContent === '已保存'")
             }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -129,6 +132,23 @@ class WritingFlowTest {
 
     private suspend fun chapterText(library: Library, bookId: String) =
         library.export(bookId).records("volumes").first().records("chapters").first().string("text")
+
+    private fun checkEditorVisible(scenario: ActivityScenario<MainActivity>) {
+        val visible = evaluate(scenario, """
+            (() => {
+              const field = $chapterEditor;
+              const rect = field?.getBoundingClientRect();
+              if (!rect || rect.width < 160 || rect.height < 22 || rect.top < 0 ||
+                  rect.top + 20 >= innerHeight || rect.left < 0 || rect.right > innerWidth) return false;
+              return document.elementFromPoint(rect.left + 12, rect.top + 12) === field;
+            })()
+        """.trimIndent())
+        val geometry = if (visible != "true") evaluate(scenario, """
+            JSON.stringify(Object.fromEntries(['.studio', '.workspace', '.writing', '.editor-toolbar', '.paper', '.manuscript-editor']
+              .map(selector => [selector, document.querySelector(selector)?.getBoundingClientRect()])))
+        """.trimIndent()) else ""
+        check(visible == "true") { "正文编辑区不在可操作的屏幕范围内：$geometry" }
+    }
 
     private fun replaceBody(scenario: ActivityScenario<MainActivity>, text: String) {
         check(evaluate(scenario, """

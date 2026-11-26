@@ -1,10 +1,30 @@
 .android-studio {
   --topbar-height: 54px;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 
 .android-studio .topbar {
+  grid-area: 1 / 1;
   padding-inline: 12px;
+}
+
+.android-studio > :is(.workspace, .research-library) {
+  grid-area: 2 / 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.android-studio > .workspace {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.android-studio .workspace > .writing {
+  grid-row: 1;
+}
+
+.android-studio .paper {
+  animation: none;
 }
 
 .android-studio .brand-home {
