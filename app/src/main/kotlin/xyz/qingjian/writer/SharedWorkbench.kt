@@ -197,6 +197,7 @@ internal fun SharedWorkbench(
                                     val argument = input.optJSONObject("argument") ?: JSONObject()
                                     val result = when (operation) {
                                         "book" -> model.workbenchBook(bookId).put("dark", dark)
+                                            .put("viewportHeight", viewportHeight())
                                         "save" -> model.saveWorkbenchBook(bookId, argument.getString("revision"),
                                             argument.getString("snapshot"))
                                         "position" -> model.workbenchCursor(bookId, argument.getString("chapter"))
@@ -233,7 +234,10 @@ internal fun SharedWorkbench(
                                         "versions" -> model.workbenchVersions(bookId, argument.string("chapter"),
                                             argument.string("version").toLongOrNull(), argument.optBoolean("create"))
                                         "usage" -> model.workbenchUsage()
-                                        "ready" -> JSONObject().also { ready = true }
+                                        "ready" -> JSONObject().also {
+                                            ready = true
+                                            updateWorkbenchHeight()
+                                        }
                                         "failure" -> JSONObject().also { failed = "无法打开写作工作区。" }
                                         "navigate" -> {
                                             val page = WorkbenchPage.valueOf(argument.getString("page"))
@@ -255,6 +259,9 @@ internal fun SharedWorkbench(
                             }
                             requests[requestId] = job
                             job.start()
+                        }
+                        addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                            if (ready && bottom - top != oldBottom - oldTop) updateWorkbenchHeight()
                         }
                         view = this
                         loadUrl(workbenchOrigin + workbenchPath)
@@ -281,5 +288,14 @@ internal fun SharedWorkbench(
                 }
             }
         }
+    }
+}
+
+private fun WebView.viewportHeight(): Int = (height / resources.displayMetrics.density).toInt()
+
+private fun WebView.updateWorkbenchHeight() {
+    val availableHeight = viewportHeight()
+    if (availableHeight > 0) {
+        evaluateJavascript("document.documentElement.style.setProperty('--android-workbench-height','${availableHeight}px')", null)
     }
 }

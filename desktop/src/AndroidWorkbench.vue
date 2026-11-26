@@ -12,7 +12,11 @@ window.qingjianModels = configured => { accounts.value = { ...accounts.value, co
 
 onMounted(async () => {
   try {
-    session.value = await openAndroidBook()
+    const opened = await openAndroidBook()
+    if (opened.viewportHeight > 0) {
+      document.documentElement.style.setProperty('--android-workbench-height', `${opened.viewportHeight}px`)
+    }
+    session.value = opened
     await nextTick()
     await androidCall('ready')
   } catch (failure) {
