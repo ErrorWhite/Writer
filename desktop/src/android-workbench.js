@@ -1,7 +1,7 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { clearSnapshot, pendingSnapshots, retainSnapshot } from './book-journal.js'
 
-const bridge = import.meta.env.MODE === 'android' ? window.QingjianWorkbench : undefined
+const bridge = import.meta.env?.MODE === 'android' ? window.QingjianWorkbench : undefined
 export const androidWorkbench = Boolean(bridge)
 const pending = new Map()
 if (bridge) bridge.onmessage = ({ data }) => {

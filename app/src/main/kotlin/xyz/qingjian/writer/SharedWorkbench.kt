@@ -2,6 +2,10 @@ package xyz.qingjian.writer
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -87,6 +91,11 @@ internal fun SharedWorkbench(
     var failed by remember { mutableStateOf<String?>(null) }
     var exportFormat by rememberSaveable { mutableStateOf<String?>(null) }
     var exportChapter by rememberSaveable { mutableStateOf<String?>(null) }
+    var fileReply by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val attachmentPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        fileReply?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data))
+        fileReply = null
+    }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val format = exportFormat?.let(ExportFormat::valueOf)
         val uri = result.data?.data
@@ -132,6 +141,21 @@ internal fun SharedWorkbench(
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
                         settings.javaScriptCanOpenWindowsAutomatically = false
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onShowFileChooser(
+                                webView: WebView, callback: ValueCallback<Array<Uri>>, parameters: FileChooserParams
+                            ): Boolean {
+                                fileReply?.onReceiveValue(null)
+                                fileReply = callback
+                                try {
+                                    attachmentPicker.launch(parameters.createIntent())
+                                } catch (_: android.content.ActivityNotFoundException) {
+                                    callback.onReceiveValue(null)
+                                    fileReply = null
+                                }
+                                return true
+                            }
+                        }
                         webViewClient = object : WebViewClientCompat() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                                 !request.isForMainFrame || request.url.toString().substringBefore('#') != workbenchOrigin + workbenchPath
@@ -148,6 +172,11 @@ internal fun SharedWorkbench(
 
                             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceErrorCompat) {
                                 if (request.isForMainFrame) failed = "无法加载写作工作区。"
+                            }
+
+                            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                                failed = "写作工作区已关闭。重新打开作品可恢复草稿。"
+                                return true
                             }
                         }
                         WebViewCompat.addWebMessageListener(this, workbenchBridge, setOf(workbenchOrigin)) {
@@ -232,6 +261,8 @@ internal fun SharedWorkbench(
                     }
                 },
                 onRelease = { released ->
+                    fileReply?.onReceiveValue(null)
+                    fileReply = null
                     if (view === released) view = null
                     ready = false
                     WebViewCompat.removeWebMessageListener(released, workbenchBridge)

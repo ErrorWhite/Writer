@@ -1358,10 +1358,12 @@ function updateViewport() {
 }
 
 function showSection(id) {
+  if (props.android && id !== section.value) void persistAndroidPosition().catch(() => {})
   section.value = id
   sourceMode.value = false
   editorScroll.value?.scrollTo(0, 0)
   if (id !== 'chapters') mobileNavigation.value = false
+  else if (props.android) void restoreAndroidChapter(activeChapter.value.id)
 }
 
 function openComparison(review) {
