@@ -3,8 +3,6 @@ package xyz.qingjian.writer
 import android.content.Context
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
 import android.webkit.WebView
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -78,21 +76,17 @@ class WritingFlowTest {
         runBlocking { library.store(book, null) }
         context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
 
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            requireNotNull(device.wait(Until.findObject(By.text("源码")), 15_000)).click()
-            requireNotNull(device.wait(Until.findObject(By.desc("章节正文")), 10_000))
-            var connection: InputConnection? = null
-            scenario.onActivity { activity ->
-                val host = requireNotNull(findTextEditor(activity.window.decorView)) { "未找到原生输入会话" }
-                connection = requireNotNull(host.onCreateInputConnection(EditorInfo()))
-                check(connection?.setComposingText("qing", 1) == true)
+        withWritingIme(device) {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                requireNotNull(device.wait(Until.findObject(By.text("源码")), 15_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("测试组字")), 10_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("qing")), 10_000))
+                assertEquals("", runBlocking { library.chapterText(bookId, chapterId) })
+                requireNotNull(device.wait(Until.findObject(By.text("提交测试汉字")), 10_000)).click()
+                assertChapterSaved(device, scenario, library, DraftKey(bookId, chapterId), "青")
+                requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
             }
-            requireNotNull(device.wait(Until.findObject(By.text("qing")), 10_000))
-            assertEquals("", runBlocking { library.chapterText(bookId, chapterId) })
-            scenario.onActivity { check(connection?.commitText("青", 1) == true) }
-            assertChapterSaved(device, scenario, library, DraftKey(bookId, chapterId), "青")
-            requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
-            requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
         }
     }
 
@@ -241,30 +235,26 @@ class WritingFlowTest {
         device.executeShellCommand("svc wifi disable")
         device.executeShellCommand("svc data disable")
         try {
-            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                requireNotNull(device.wait(Until.findObject(By.text("原生续写验收")), 15_000)).click()
-                requireNotNull(device.wait(Until.findObject(By.text("源码")), 10_000)).click()
-                val field = requireNotNull(device.wait(Until.findObject(By.desc("章节正文")), 10_000))
-                val text = buildString {
-                    append("她穿过薄雾。\n\n## 次日\n\n")
-                    repeat(400) { index -> append("第 ${index + 1} 段。渡船靠岸，远处的石堤浮在潮水上。\n\n") }
-                    append("最后一段。")
+            withWritingIme(device) {
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    requireNotNull(device.wait(Until.findObject(By.text("原生续写验收")), 15_000)).click()
+                    requireNotNull(device.wait(Until.findObject(By.text("源码")), 10_000)).click()
+                    requireNotNull(device.wait(Until.findObject(By.text("输入测试长章")), 10_000)).click()
+                    assertChapterSaved(device, scenario, library, DraftKey(bookId, first.string("id")), longChapterFixture())
+                    requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
+                    requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
+                    scenario.onActivity { check(findWebView(it.window.decorView) == null) }
+                    screenshot(device, "chapter")
+                    requireNotNull(device.wait(Until.findObject(By.text("目录")), 10_000)).click()
+                    requireNotNull(device.wait(Until.findObject(By.text("原生验收次章")), 10_000)).click()
+                    requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 10_000))
                 }
-                field.text = text
-                assertChapterSaved(device, scenario, library, DraftKey(bookId, first.string("id")), text)
-                requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
-                requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
-                scenario.onActivity { check(findWebView(it.window.decorView) == null) }
-                screenshot(device, "chapter")
-                requireNotNull(device.wait(Until.findObject(By.text("目录")), 10_000)).click()
-                requireNotNull(device.wait(Until.findObject(By.text("原生验收次章")), 10_000)).click()
-                requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 10_000))
-            }
-            ActivityScenario.launch(MainActivity::class.java).use {
-                requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 15_000))
-                val saved = runBlocking { library.export(bookId) }
-                assertEquals(next.string("id"), saved.string("activeId"))
-                assertEquals(first.string("id"), saved.records("volumes").first().records("chapters").first().string("id"))
+                ActivityScenario.launch(MainActivity::class.java).use {
+                    requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 15_000))
+                    val saved = runBlocking { library.export(bookId) }
+                    assertEquals(next.string("id"), saved.string("activeId"))
+                    assertEquals(first.string("id"), saved.records("volumes").first().records("chapters").first().string("id"))
+                }
             }
         } finally {
             device.executeShellCommand("svc wifi enable")
@@ -573,12 +563,19 @@ class WritingFlowTest {
         return null
     }
 
-    private fun findTextEditor(view: View): View? {
-        if (view.onCheckIsTextEditor()) return view
-        if (view is ViewGroup) {
-            for (index in 0 until view.childCount) findTextEditor(view.getChildAt(index))?.let { return it }
+    private fun withWritingIme(device: UiDevice, action: () -> Unit) {
+        val previous = device.executeShellCommand("settings get secure default_input_method").trim()
+        val testPackage = InstrumentationRegistry.getInstrumentation().context.packageName
+        val ime = "$testPackage/${WritingTestIme::class.java.name}"
+        device.executeShellCommand("ime enable $ime")
+        try {
+            device.executeShellCommand("ime set $ime")
+            assertEquals(ime, device.executeShellCommand("settings get secure default_input_method").trim())
+            action()
+        } finally {
+            if (previous.isNotEmpty() && previous != "null") device.executeShellCommand("ime set $previous")
+            if (previous != ime) device.executeShellCommand("ime disable $ime")
         }
-        return null
     }
 
     private fun screenshot(device: UiDevice, name: String) {
