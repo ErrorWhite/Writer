@@ -255,12 +255,21 @@ private val chapterWordCountMigration = object : Migration(2, 3) {
 }
 
 internal class Library(context: Context) {
-    private val database = Room.databaseBuilder(context, LibraryDatabase::class.java, "qingjian.db")
-        .setDriver(BundledSQLiteDriver())
-        .setQueryCoroutineContext(Dispatchers.IO)
-        .addMigrations(writingJournalMigration, chapterWordCountMigration)
-        .build()
+    private val database = database(context)
     private val dao = database.library()
+
+    private companion object {
+        @Volatile private var sharedDatabase: LibraryDatabase? = null
+
+        fun database(context: Context): LibraryDatabase = sharedDatabase ?: synchronized(this) {
+            sharedDatabase ?: Room.databaseBuilder(context.applicationContext, LibraryDatabase::class.java, "qingjian.db")
+                .setDriver(BundledSQLiteDriver())
+                .setQueryCoroutineContext(Dispatchers.IO)
+                .addMigrations(writingJournalMigration, chapterWordCountMigration)
+                .build()
+                .also { sharedDatabase = it }
+        }
+    }
 
     val shelf = dao.shelf()
     fun book(id: String) = dao.observeBook(id)

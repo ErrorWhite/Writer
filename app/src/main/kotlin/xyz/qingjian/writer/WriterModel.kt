@@ -816,6 +816,9 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                if (application.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                    android.util.Log.w("QingjianDraft", "Could not persist editor draft", error)
+                }
                 notice("正文保存失败，请重试。")
                 SaveState.Failed
             }

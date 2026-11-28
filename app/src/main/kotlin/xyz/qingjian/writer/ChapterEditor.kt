@@ -154,12 +154,12 @@ private fun ChapterBody(
     var paragraphActions by remember { mutableStateOf<Int?>(null) }
     val settings = remember(book.payload) { org.json.JSONObject(book.payload) }
     val chapterSettings = remember(chapter.payload) { JSONObject(chapter.payload) }
-    val inlineCandidates = remember(chapter.payload, text) {
-        val review = JSONObject(chapter.payload).optJSONObject("nativeReview")
+    val review = remember(chapter) { pendingWritingReview(chapterJson(chapter)) }
+    val inlineCandidates = remember(review, text) {
         when {
             review == null || review.string("baseline") != text -> emptyList()
-            review.string("intent") == "Paragraph" -> listOf(review)
-            review.string("intent") == "Batch" -> review.records("items")
+            review.string("intent") == WritingIntent.Paragraph.name -> listOf(review)
+            review.string("intent") == WritingIntent.Batch.name -> review.records("items")
             else -> emptyList()
         }
     }
@@ -379,7 +379,8 @@ private fun ChapterBody(
                                             Surface(Modifier.fillMaxWidth(), shape = WriterTheme.shapes.medium,
                                                 color = WriterTheme.colorScheme.surfaceContainer) {
                                                 Column(Modifier.padding(10.dp)) {
-                                                    Text(candidate.string("after"), maxLines = 4, style = WriterTheme.typography.bodyMedium)
+                                                    Text(candidate.string("editedAfter", candidate.string("after")),
+                                                        maxLines = 4, style = WriterTheme.typography.bodyMedium)
                                                     TextButton(onClick = {
                                                         aiRange = TextRange(candidate.optInt("start"))
                                                         pickedParagraphs = emptySet()

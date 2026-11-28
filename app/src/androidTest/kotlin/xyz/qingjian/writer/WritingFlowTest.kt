@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.webkit.WebView
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -89,11 +90,7 @@ class WritingFlowTest {
             requireNotNull(device.wait(Until.findObject(By.text("qing")), 10_000))
             assertEquals("", runBlocking { library.chapterText(bookId, chapterId) })
             scenario.onActivity { check(connection?.commitText("青", 1) == true) }
-            runBlocking {
-                withTimeout(10_000) {
-                    while (library.chapterText(bookId, chapterId) != "青") delay(100)
-                }
-            }
+            assertChapterSaved(device, scenario, library, DraftKey(bookId, chapterId), "青")
             requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
             requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
         }
@@ -254,11 +251,7 @@ class WritingFlowTest {
                     append("最后一段。")
                 }
                 field.text = text
-                runBlocking {
-                    withTimeout(10_000) {
-                        while (chapterText(library, bookId) != text) delay(100)
-                    }
-                }
+                assertChapterSaved(device, scenario, library, DraftKey(bookId, first.string("id")), text)
                 requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
                 requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
                 scenario.onActivity { check(findWebView(it.window.decorView) == null) }
@@ -485,6 +478,32 @@ class WritingFlowTest {
 
     private suspend fun chapterText(library: Library, bookId: String) =
         library.export(bookId).records("volumes").first().records("chapters").first().string("text")
+
+    private fun assertChapterSaved(
+        device: UiDevice, scenario: ActivityScenario<MainActivity>, library: Library, key: DraftKey, expected: String
+    ) {
+        val saved = runBlocking {
+            withTimeoutOrNull(10_000) {
+                while (library.chapterText(key.bookId, key.chapterId) != expected) delay(100)
+                true
+            }
+        }
+        if (saved == true) return
+        var pending: Draft? = null
+        var notice: String? = null
+        scenario.onActivity { activity ->
+            val model = ViewModelProvider(activity)[WriterModel::class.java]
+            pending = model.drafts.value[key]
+            notice = model.notice.value
+        }
+        val stored = runBlocking { library.chapterText(key.bookId, key.chapterId) }
+        val visible = device.findObject(By.desc("章节正文"))?.text
+        screenshot(device, if (expected.length == 1) "ime-save-timeout" else "long-chapter-save-timeout")
+        check(false) {
+            "正文保存超时。预期 ${expected.length} 字符，数据库 ${stored.length} 字符，编辑器 ${visible?.length} 字符，" +
+                "保存状态 ${pending?.state}，待保存 ${pending?.text?.length} 字符，提示 $notice。"
+        }
+    }
 
     private fun checkEditorVisible(scenario: ActivityScenario<MainActivity>) {
         val hitTest = """

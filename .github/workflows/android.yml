@@ -96,6 +96,7 @@ jobs:
             io.wboat.writer.debug.test/androidx.test.runner.AndroidJUnitRunner \
             | tee "$RUNNER_TEMP/qingjian-instrumentation.log"
           adb logcat -d -b crash -v brief | tee "$RUNNER_TEMP/qingjian-crash.log"
+          adb logcat -d -v brief -s 'QingjianDraft:W' '*:S' > "$RUNNER_TEMP/qingjian-draft-save.log"
           adb pull /sdcard/Download/qingjian-qa "$RUNNER_TEMP/qingjian-qa" || true
           grep -Eq '^OK \(([2-9]|[1-9][0-9]+) tests\)' "$RUNNER_TEMP/qingjian-instrumentation.log"
           adb exec-out run-as io.wboat.writer.debug cat files/android-pc-manuscript.json \
@@ -113,6 +114,7 @@ jobs:
             ${{ runner.temp }}/qingjian-emulator.log
             ${{ runner.temp }}/qingjian-instrumentation.log
             ${{ runner.temp }}/qingjian-crash.log
+            ${{ runner.temp }}/qingjian-draft-save.log
             ${{ runner.temp }}/qingjian-qa/
 
   signed:
