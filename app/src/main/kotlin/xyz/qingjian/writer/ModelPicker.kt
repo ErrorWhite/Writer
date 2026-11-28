@@ -23,14 +23,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.suqi8.coui.kmp.basic.Button
-import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.CardListGroup
-import io.github.suqi8.coui.kmp.basic.EmptyState
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
-import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
-import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import com.itos.coui.sheet.BottomSheet
 
 private data class ModelChoice(val id: String, val group: String, val name: String, val model: String)
 
@@ -54,21 +49,21 @@ internal fun ModelPicker(model: WriterModel, modifier: Modifier = Modifier) {
         }
     }
     val current = choices.firstOrNull { it.id == selected }
-    var open by rememberSaveable { mutableStateOf(false) }
+    val sheet = rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var draft by rememberSaveable { mutableStateOf<String?>(null) }
     TextButton(modifier = modifier, onClick = {
         draft = selected
         query = ""
-        open = true
+        sheet.value = true
     }) {
         Text(current?.let { it.model.ifBlank { it.name } } ?: "选择模型", maxLines = 1)
     }
-    if (!open) return
     val filtered = choices.filter { choice ->
         query.isBlank() || listOf(choice.group, choice.name, choice.model).any { it.contains(query.trim(), true) }
     }.groupBy(ModelChoice::group).entries.toList()
-    OverlayBottomSheet(show = true, title = "选择模型", onDismissRequest = { open = false }, showDragHandle = true) {
+    BottomSheet(visible = sheet, dismissDescription = "关闭模型选择", titleContent = { Text("选择模型") },
+        showDragHandle = true, scrollableContent = false) {
         Column(
             Modifier.fillMaxWidth().windowInsetsPadding(
                 WindowInsets.navigationBars.exclude(WindowInsets.ime).only(WindowInsetsSides.Bottom)
@@ -82,23 +77,17 @@ internal fun ModelPicker(model: WriterModel, modifier: Modifier = Modifier) {
                     EmptyState(title = "还没有可用模型", subtitle = "在设置中连接供应商或登录 ChatGPT 套餐。")
                 } else if (filtered.isEmpty()) item { EmptyState(title = "没有匹配的模型") }
                 items(filtered, key = { it.key }) { (group, options) ->
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(group, style = WriterTheme.typography.labelLarge)
-                        Card {
-                            CardListGroup {
-                                for (choice in options) item(choice.id) {
-                                    val title = if (choice.model.isBlank()) choice.name else "${choice.name} · ${choice.model}"
-                                    RadioButtonPreference(title, draft == choice.id, { draft = choice.id },
-                                        radioButtonLocation = RadioButtonLocation.End)
-                                }
-                            }
+                    PreferenceGroup(group) {
+                        for (choice in options) item(choice.id) {
+                            val title = if (choice.model.isBlank()) choice.name else "${choice.name} · ${choice.model}"
+                            RadioButtonPreference(title, draft == choice.id, { draft = choice.id })
                         }
                     }
                 }
             }
             Button(onClick = {
                 draft?.let(model::useAccount)
-                open = false
+                sheet.value = false
             }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 enabled = choices.any { it.id == draft }) { Text("确认模型") }
         }

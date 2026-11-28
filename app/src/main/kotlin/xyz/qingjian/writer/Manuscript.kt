@@ -16,6 +16,14 @@ internal fun JSONObject.string(key: String, fallback: String = ""): String =
 internal fun JSONObject.records(key: String): List<JSONObject> =
     optJSONArray(key)?.objects().orEmpty()
 
+private val manuscriptWords = Regex("[\\p{IsHan}]|[\\p{L}\\p{N}&&[^\\p{IsHan}]]+")
+
+internal fun manuscriptWordCount(text: String): Int = manuscriptWords.findAll(text).count()
+
+internal fun bookChapterGoal(book: JSONObject): Int =
+    if (book.has("goal")) book.optInt("goal").coerceAtLeast(0)
+    else book.optJSONObject("aiSetup")?.optInt("chapterTarget")?.coerceAtLeast(0) ?: 0
+
 internal object Manuscript {
     fun create(title: String): JSONObject {
         val chapter = newChapter("开篇")

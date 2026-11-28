@@ -208,11 +208,12 @@ function createProfileSession(env, directory, execute, home) {
         try {
           const event = JSON.parse(line)
           if (event.type === 'item.completed' && event.item?.type === 'agent_message') text = event.item.text
-          if (event.type === 'turn.completed') { usage = event.usage; model ||= event.model || '' }
+          if (event.type === 'turn.completed') { usage = event.usage; model = event.model || model }
         } catch { /* Some CLI startup messages are not JSON. */ }
       }
       if (!text.trim()) throw new Error('Codex 未返回可用正文。')
-      return { text: text.trim(), provider: 'codex', model, account, usage: { input: usage?.input_tokens ?? null, output: usage?.output_tokens ?? null } }
+      return { text: text.trim(), provider: 'codex', model, account: account.name, accountId: account.id,
+        usage: { input: usage?.input_tokens ?? null, output: usage?.output_tokens ?? null, cached: usage?.cached_input_tokens ?? null } }
     } finally {
       await rmdir(cwd).catch(() => {})
     }
@@ -303,7 +304,7 @@ export function createCodexSession(env, directory, execute = run) {
   async function generate(parameters) {
     const data = await readAccounts()
     const account = accountFor(data, data.selected)
-    return sessionFor(account).generate(parameters, await system.readSettings(), account.name)
+    return sessionFor(account).generate(parameters, await system.readSettings(), account)
   }
 
   return { status, loginAction, manage, configure: system.configure, generate }

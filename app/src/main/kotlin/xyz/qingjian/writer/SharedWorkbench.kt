@@ -3,6 +3,7 @@ package xyz.qingjian.writer
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.view.View
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -43,8 +44,8 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.Text
+import com.itos.coui.layout.Scaffold
+import androidx.compose.material3.Text
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -62,11 +63,14 @@ internal enum class WorkbenchPage {
 }
 
 @Composable
-private fun WorkbenchLoading(padding: PaddingValues, error: String?, openNative: () -> Unit) {
+private fun WorkbenchLoading(padding: PaddingValues, error: String?, recoveryOnly: Boolean, openNative: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(error ?: "正在打开书稿…", color = WriterTheme.colorScheme.onBackground)
-            if (error != null) TextButton(onClick = openNative) { Text("用原生编辑器打开") }
+            Text(error ?: if (recoveryOnly) "正在恢复旧草稿…" else "正在打开书稿…",
+                color = WriterTheme.colorScheme.onBackground)
+            if (error != null) TextButton(onClick = openNative) {
+                Text(if (recoveryOnly) "返回写作" else "用原生编辑器打开")
+            }
         }
     }
 }
@@ -77,8 +81,10 @@ internal fun SharedWorkbench(
     model: WriterModel,
     bookId: String,
     dark: Boolean,
+    recoveryOnly: Boolean = false,
     navigate: (WorkbenchPage) -> Unit
 ) {
+    val pageUrl = workbenchOrigin + workbenchPath + if (recoveryOnly) "?recover=1" else ""
     val scope = rememberCoroutineScope()
     val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val account by model.activeAccount.collectAsStateWithLifecycle()
@@ -121,7 +127,7 @@ internal fun SharedWorkbench(
         if (ready) view?.evaluateJavascript("window.qingjianModels?.($configured)", null)
     }
     BackHandler(enabled = !keyboard) {
-        if (ready && failed == null) {
+        if (!recoveryOnly && ready && failed == null) {
             view?.evaluateJavascript("window.qingjianBack?.()", null)
         } else navigate(WorkbenchPage.Shelf)
     }
@@ -134,6 +140,10 @@ internal fun SharedWorkbench(
                         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
                         .build()
                     WebView(context).apply {
+                        if (recoveryOnly) {
+                            alpha = 0f
+                            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                        }
                         val requests = mutableMapOf<String, Job>()
                         setBackgroundColor(background)
                         settings.javaScriptEnabled = true
@@ -145,6 +155,7 @@ internal fun SharedWorkbench(
                             override fun onShowFileChooser(
                                 webView: WebView, callback: ValueCallback<Array<Uri>>, parameters: FileChooserParams
                             ): Boolean {
+                                if (recoveryOnly) return false
                                 fileReply?.onReceiveValue(null)
                                 fileReply = callback
                                 try {
@@ -158,7 +169,7 @@ internal fun SharedWorkbench(
                         }
                         webViewClient = object : WebViewClientCompat() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                                !request.isForMainFrame || request.url.toString().substringBefore('#') != workbenchOrigin + workbenchPath
+                                !request.isForMainFrame || request.url.toString().substringBefore('#') != pageUrl
 
                             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                                 val url = request.url
@@ -188,6 +199,9 @@ internal fun SharedWorkbench(
                             val input = runCatching { JSONObject(message.data ?: "") }.getOrNull()
                                 ?: return@addWebMessageListener
                             val operation = input.string("operation")
+                            if (recoveryOnly && operation !in setOf("book", "save", "recovered", "failure", "cancel")) {
+                                return@addWebMessageListener
+                            }
                             if (operation == "cancel") {
                                 requests.remove(input.string("id"))?.cancel()
                                 return@addWebMessageListener
@@ -241,7 +255,20 @@ internal fun SharedWorkbench(
                                             ready = true
                                             updateWorkbenchHeight()
                                         }
-                                        "failure" -> JSONObject().also { failed = "无法打开写作工作区。" }
+                                        "recovered" -> {
+                                            check(recoveryOnly)
+                                            model.notice(when {
+                                                argument.optBoolean("conflict") -> "旧草稿已保存为书架中的冲突副本。"
+                                                argument.optBoolean("replayed") -> "已恢复旧工作区草稿。"
+                                                else -> "没有待恢复的旧草稿。"
+                                            })
+                                            reply.postMessage(response.put("result", JSONObject()).toString())
+                                            navigate(WorkbenchPage.Native)
+                                            return@launch
+                                        }
+                                        "failure" -> JSONObject().also {
+                                            failed = if (recoveryOnly) "无法恢复旧草稿。返回写作后可重试。" else "无法打开写作工作区。"
+                                        }
                                         "navigate" -> {
                                             val page = WorkbenchPage.valueOf(argument.getString("page"))
                                             reply.postMessage(response.put("result", JSONObject()).toString())
@@ -267,7 +294,7 @@ internal fun SharedWorkbench(
                             if (ready && bottom - top != oldBottom - oldTop) updateWorkbenchHeight()
                         }
                         view = this
-                        loadUrl(workbenchOrigin + workbenchPath)
+                        loadUrl(pageUrl)
                     }
                 },
                 onRelease = { released ->
@@ -284,9 +311,9 @@ internal fun SharedWorkbench(
         if (!ready || failed != null) {
             Scaffold(
                 containerColor = WriterTheme.colorScheme.background,
-                topBar = { BackBar("写作", { navigate(WorkbenchPage.Shelf) }) }
+                topBar = { BackBar(if (recoveryOnly) "恢复旧草稿" else "写作", { navigate(WorkbenchPage.Shelf) }) }
             ) { padding ->
-                WorkbenchLoading(padding, failed ?: if (supported) null else "此设备的 WebView 需要更新。") {
+                WorkbenchLoading(padding, failed ?: if (supported) null else "此设备的 WebView 需要更新。", recoveryOnly) {
                     navigate(WorkbenchPage.Native)
                 }
             }

@@ -1,6 +1,7 @@
 package xyz.qingjian.writer
 
 import android.content.Context
+import java.io.IOException
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -13,7 +14,17 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal data class SyncedBook(val endpoint: String, val revision: String?, val digest: String)
+internal data class SyncedBook(
+    val endpoint: String, val revision: String?, val digest: String, val deleteDigest: String? = null
+) {
+    fun json() = JSONObject().put("endpoint", endpoint).put("revision", revision.orEmpty()).put("digest", digest)
+        .put("deleteDigest", deleteDigest ?: JSONObject.NULL)
+
+    companion object {
+        fun read(data: JSONObject) = SyncedBook(data.getString("endpoint"),
+            data.string("revision").ifEmpty { null }, data.string("digest"), data.string("deleteDigest").ifEmpty { null })
+    }
+}
 
 internal class BookSync(
     context: Context,
@@ -28,7 +39,7 @@ internal class BookSync(
     private val links = MutableStateFlow(preferences.all.mapNotNull { (id, value) ->
         runCatching {
             val item = JSONObject(value as String)
-            id to SyncedBook(item.getString("endpoint"), item.string("revision").ifEmpty { null }, item.string("digest"))
+            id to SyncedBook.read(item)
         }.getOrNull()
     }.toMap())
     val enabled = links.asStateFlow()
@@ -77,27 +88,82 @@ internal class BookSync(
         saveLink(id, null)
     }
 
-    suspend fun delete(id: String) = network.withLock {
+    suspend fun cancelDelete(id: String) = network.withLock {
         val link = links.value[id] ?: return@withLock
-        require(studio.connected(link.endpoint)) { "请先登录书稿绑定的服务器。" }
+        if (link.deleteDigest != null) {
+            saveLink(id, link.copy(digest = "", deleteDigest = null))
+            setStatus(id, "已取消待同步删除")
+        }
+    }
+
+    suspend fun delete(id: String): Boolean = network.withLock {
+        val link = links.value[id]
+        if (link == null) {
+            documentLock.withLock {
+                flush(id)
+                library.remove(id)
+            }
+            return@withLock true
+        }
+        val pending = link.deleteDigest?.let { link } ?: documentLock.withLock {
+            flush(id)
+            link.copy(deleteDigest = bookDigest(library.export(id))).also { saveLink(id, it) }
+        }
+        try {
+            completeDelete(id, pending)
+        } catch (error: IOException) {
+            setStatus(id, "待同步删除")
+            false
+        }
+    }
+
+    private suspend fun completeDelete(id: String, link: SyncedBook): Boolean {
+        if (!studio.connected(link.endpoint)) {
+            setStatus(id, "待同步删除 · 请登录青简服务器")
+            return false
+        }
         val result = studio.writeSyncBook(link.endpoint, id, link.revision,
             "delete-" + syncHash(id + link.revision), book = null)
-        check(result.status in 200..299 || result.status == 410) { "服务器书稿有更新，请同步后再删除。" }
-        saveLink(id, null)
+        if (result.status == 412) {
+            saveLink(id, link.copy(deleteDigest = null))
+            setStatus(id, "服务器书稿有更新，已取消待同步删除")
+            notice("服务器书稿有更新，请同步确认后再删除。")
+            return false
+        }
+        if (result.status == 401) {
+            setStatus(id, "待同步删除 · 请重新登录")
+            return false
+        }
+        check(result.status in 200..299 || result.status == 410 ||
+            result.status == 404 && result.code == "book_missing" && link.revision == null) {
+            "服务器无法删除书稿，已保留本地稿件。"
+        }
+        documentLock.withLock {
+            flush(id)
+            if (library.hasBook(id)) {
+                val local = library.export(id)
+                if (bookDigest(local) != link.deleteDigest) preserveConflict(id, local, result.revision ?: "deleted")
+                library.remove(id)
+            }
+            saveLink(id, null)
+        }
+        return true
     }
 
     suspend fun syncPending(endpoint: String) = network.withLock {
         for ((id, link) in links.value) {
             try {
                 if (endpoint != link.endpoint || !studio.connected(endpoint)) {
-                    setStatus(id, "同步暂停，请登录青简服务器")
+                    setStatus(id, if (link.deleteDigest != null) "待同步删除 · 请登录青简服务器" else "同步暂停，请登录青简服务器")
                     continue
                 }
-                reconcile(id, link)
+                if (link.deleteDigest == null) reconcile(id, link)
+                else if (completeDelete(id, link)) setStatus(id, "服务器已删除书稿")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                setStatus(id, "同步暂停 · " + (error.localizedMessage ?: "稍后重试"))
+                val state = if (link.deleteDigest != null) "待同步删除" else "同步暂停"
+                setStatus(id, "$state · " + (error.localizedMessage ?: "稍后重试"))
             }
         }
     }
@@ -174,12 +240,15 @@ internal class BookSync(
         withContext(Dispatchers.IO) {
             val update = preferences.edit()
             if (link == null) update.remove(id)
-            else update.putString(id, JSONObject().put("endpoint", link.endpoint)
-                .put("revision", link.revision.orEmpty()).put("digest", link.digest).toString())
+            else update.putString(id, link.json().toString())
             check(update.commit()) { "无法保存同步状态。" }
         }
         links.update { if (link == null) it - id else it + (id to link) }
-        setStatus(id, if (link == null) "未开启同步" else "已同步")
+        setStatus(id, when {
+            link == null -> "未开启同步"
+            link.deleteDigest != null -> "待同步删除"
+            else -> "已同步"
+        })
     }
 }
 
@@ -192,7 +261,7 @@ internal suspend fun workbenchRevision(book: JSONObject) = withContext(Dispatche
     syncHash(sortedJson(book))
 }
 
-private fun sortedJson(value: Any?): String = when (value) {
+internal fun sortedJson(value: Any?): String = when (value) {
     is JSONObject -> value.keys().asSequence().sorted().joinToString(prefix = "{", postfix = "}") { key ->
         JSONObject.quote(key) + ":" + sortedJson(value.get(key))
     }
@@ -201,6 +270,6 @@ private fun sortedJson(value: Any?): String = when (value) {
     else -> value.toString()
 }
 
-private fun syncHash(value: String): String =
+internal fun syncHash(value: String): String =
     MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }

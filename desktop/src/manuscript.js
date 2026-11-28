@@ -126,7 +126,7 @@ export function loadManuscript(snapshot) {
   }
 }
 
-export function importManuscript(text) {
+export function importManuscript(text, { preserveIdentity = false } = {}) {
   const source = JSON.parse(text.replace(/^\uFEFF/u, ''))
   if (typeof source?.title !== 'string' || !source.title.trim()) throw new Error('备份缺少书名。')
   const book = normalizeManuscript(source, starterManuscript())
@@ -146,7 +146,9 @@ export function importManuscript(text) {
     throw new Error('备份中的批注、伏笔或剧情资料格式有误。')
   }
   if (!chapters.some(({ id }) => id === book.activeId)) book.activeId = chapters[0].id
-  return { ...book, id: crypto.randomUUID(), aiMode: false, aiAuto: false }
+  const id = preserveIdentity && typeof source.id === 'string' && /^[a-z0-9-]{1,80}$/i.test(source.id)
+    ? source.id : crypto.randomUUID()
+  return { ...book, id, aiMode: false, aiAuto: false }
 }
 
 export function hasBrowserBackup(id) {

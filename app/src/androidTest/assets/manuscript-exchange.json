@@ -1,0 +1,61 @@
+{
+  "id": "exchange-fixture",
+  "title": "雾港交换验收",
+  "activeId": "chapter-two",
+  "outline": "查清信件来历。",
+  "notes": "每天早晨只有一班渡船。",
+  "volumes": [
+    {
+      "id": "volume-one",
+      "title": "第一卷",
+      "chapters": [
+        {
+          "id": "chapter-one",
+          "title": "第一章",
+          "text": "安鹭捡起信封。",
+          "complete": true,
+          "paragraphs": [{ "id": "para-one", "text": "安鹭捡起信封。" }],
+          "handoff": { "recap": "发现信封", "bridge": "带着信封去码头" }
+        },
+        {
+          "id": "chapter-two",
+          "title": "第二章",
+          "text": "> 雾沿着码头升起。\r\n\r\n＊　＊　＊\r\n\r\n安鹭拆开信封。",
+          "paragraphs": [
+            { "id": "para-two-a", "text": "> 雾沿着码头升起。" },
+            {
+              "id": "para-two-b",
+              "text": "安鹭拆开信封。",
+              "drafts": [{ "id": "draft-one", "text": "安鹭小心地拆开信封。", "state": "pending" }]
+            }
+          ],
+          "plan": { "stage": "summary", "summary": "查看匿名信" }
+        }
+      ]
+    }
+  ],
+  "research": {
+    "annotations": [{ "id": "note-one", "text": "留意信封", "anchor": { "chapterId": "chapter-one", "paragraphId": "para-one" } }],
+    "foreshadows": [{
+      "id": "thread-one", "title": "匿名信", "status": "open",
+      "anchors": [
+        { "id": "anchor-one", "role": "埋设", "anchor": { "chapterId": "chapter-one", "paragraphId": "para-one" } },
+        { "id": "anchor-two", "role": "呼应", "anchor": { "chapterId": "chapter-two", "paragraphId": "para-two-b" } }
+      ]
+    }]
+  },
+  "creative": {
+    "assets": [{ "id": "asset-one", "title": "码头笔记.md", "type": "markdown", "data": "# 码头\n\n晨雾。", "summary": "码头纪录" }],
+    "worldBook": {
+      "entries": [{ "id": "world-one", "title": "雾港渡船", "keys": ["渡船"], "content": "每日早晨一班。", "enabled": true }],
+      "budget": 1800, "recursion": 1
+    }
+  },
+  "roleplay": {
+    "cards": [{ "id": "card-one", "name": "安鹭" }],
+    "sessions": [{
+      "id": "session-one", "cardId": "card-one",
+      "messages": [{ "id": "message-one", "role": "assistant", "text": "码头见。" }]
+    }]
+  }
+}

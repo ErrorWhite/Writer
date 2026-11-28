@@ -1,6 +1,7 @@
 package xyz.qingjian.writer
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -57,7 +58,8 @@ internal data class VolumeRow(val bookId: String, val id: String, val title: Str
 )
 internal data class ChapterRow(
     val bookId: String, val id: String, val volumeId: String, val title: String,
-    val position: Int, val text: String, val complete: Boolean, val payload: String
+    val position: Int, val text: String, val complete: Boolean, val payload: String,
+    @ColumnInfo(defaultValue = "0") val wordCount: Int
 )
 
 @Entity(
@@ -108,7 +110,10 @@ internal data class BookVersionEntry(val id: Long, val createdAt: Long)
 internal data class ShelfEntry(
     val id: String, val title: String, val chapterCount: Int, val cover: String, val activeChapterTitle: String?
 )
-internal data class ChapterEntry(val id: String, val volumeId: String, val title: String, val complete: Boolean)
+internal data class ChapterEntry(
+    val id: String, val volumeId: String, val title: String, val complete: Boolean,
+    val wordCount: Int, val goal: Int
+)
 internal data class ChapterStory(val id: String, val title: String, val volumeId: String, val payload: String)
 internal const val standaloneRoleplayId = "_qingjian_standalone_roleplay"
 
@@ -151,7 +156,11 @@ internal interface LibraryDao {
     @Query("SELECT * FROM chapters WHERE bookId = :id ORDER BY position")
     suspend fun chapters(id: String): List<ChapterRow>
 
-    @Query("SELECT id, volumeId, title, complete FROM chapters WHERE bookId = :id ORDER BY position")
+    @Query("""
+        SELECT id, volumeId, title, complete, wordCount,
+          CAST(COALESCE(json_extract(payload, '$.goal'), 0) AS INTEGER) AS goal
+        FROM chapters WHERE bookId = :id ORDER BY position
+    """)
     fun observeDirectory(id: String): Flow<List<ChapterEntry>>
 
     @Query("SELECT id FROM chapters WHERE bookId = :id AND (instr(lower(title), lower(:query)) > 0 OR instr(lower(text), lower(:query)) > 0)")
@@ -210,7 +219,7 @@ internal interface LibraryDao {
 
 @Database(
     entities = [BookRow::class, VolumeRow::class, ChapterRow::class, ChapterVersion::class, BookVersion::class, JournalEntry::class],
-    version = 2
+    version = 3
 )
 internal abstract class LibraryDatabase : RoomDatabase() {
     abstract fun library(): LibraryDao
@@ -228,11 +237,28 @@ private val writingJournalMigration = object : Migration(1, 2) {
     }
 }
 
+private val chapterWordCountMigration = object : Migration(2, 3) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE chapters ADD COLUMN wordCount INTEGER NOT NULL DEFAULT 0")
+        connection.prepare("SELECT bookId, id, text FROM chapters").use { rows ->
+            connection.prepare("UPDATE chapters SET wordCount = ? WHERE bookId = ? AND id = ?").use { update ->
+                while (rows.step()) {
+                    update.bindInt(1, manuscriptWordCount(rows.getText(2)))
+                    update.bindText(2, rows.getText(0))
+                    update.bindText(3, rows.getText(1))
+                    update.step()
+                    update.reset()
+                }
+            }
+        }
+    }
+}
+
 internal class Library(context: Context) {
     private val database = Room.databaseBuilder(context, LibraryDatabase::class.java, "qingjian.db")
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
-        .addMigrations(writingJournalMigration)
+        .addMigrations(writingJournalMigration, chapterWordCountMigration)
         .build()
     private val dao = database.library()
 
@@ -316,6 +342,9 @@ internal class Library(context: Context) {
 
     suspend fun chapterText(bookId: String, chapterId: String) = dao.chapter(bookId, chapterId)?.text.orEmpty()
 
+    suspend fun readChapter(bookId: String, chapterId: String): JSONObject =
+        chapterJson(requireNotNull(dao.chapter(bookId, chapterId)) { "锚点所在章节已删除。" })
+
     suspend fun stageEdit(bookId: String, chapterId: String, text: String) = write {
         dao.stage(JournalEntry(bookId, chapterId, text))
     }
@@ -342,13 +371,43 @@ internal class Library(context: Context) {
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 
-    suspend fun addChapter(bookId: String, volumeId: String, title: String, plan: JSONObject? = null) = write {
-        val position = dao.chapters(bookId).count { it.volumeId == volumeId }
+    suspend fun acceptVolumePlan(
+        bookId: String, chapterId: String, review: JSONObject, archived: JSONObject, proposal: JSONObject
+    ) = write {
+        val title = proposal.string("title").trim()
+        require(title.isNotBlank()) { "卷名不能为空。" }
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
+        val saved = chapterJson(chapter)
+        check(pendingWritingReview(saved)?.toString() == review.toString()) { "候选稿已经变更。" }
+        val volume = Manuscript.newVolume(title).put("direction", proposal.string("direction"))
+        saved.remove("nativeReview")
+        saved.put("nativePreviousReview", archived)
+        dao.putVolume(volumeRow(bookId, volume, dao.volumes(bookId).size))
+        dao.putChapter(chapterRow(bookId, chapter.volumeId, saved, chapter.position))
+        dao.touchBook(bookId, System.currentTimeMillis())
+    }
+
+    suspend fun addChapter(
+        bookId: String, volumeId: String, title: String, plan: JSONObject? = null, afterChapterId: String? = null
+    ) = write {
+        require(dao.volumes(bookId).any { it.id == volumeId }) { "目标卷已删除。" }
+        val siblings = dao.chapters(bookId).filter { it.volumeId == volumeId }
+        val position = if (afterChapterId == null) siblings.size else
+            siblings.indexOfFirst { it.id == afterChapterId }.also { require(it >= 0) { "上一章已经移走或删除。" } } + 1
         val source = Manuscript.newChapter(title).apply { if (plan != null) put("plan", plan) }
         val chapter = chapterRow(bookId, volumeId, source, position)
+        for (sibling in siblings.drop(position)) dao.putChapter(sibling.copy(position = sibling.position + 1))
         dao.putChapter(chapter)
         dao.selectChapter(bookId, chapter.id, System.currentTimeMillis())
         chapter.id
+    }
+
+    suspend fun renameChapter(bookId: String, chapterId: String, title: String) = write {
+        val chapter = requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" }
+        if (chapter.title == title) return@write
+        saveVersion(chapter)
+        dao.putChapter(chapter.copy(title = title))
+        dao.touchBook(bookId, System.currentTimeMillis())
     }
 
     suspend fun renameVolume(bookId: String, volumeId: String, title: String) = write {
@@ -468,12 +527,16 @@ internal class Library(context: Context) {
         }
     }
 
-    suspend fun closeChapter(bookId: String, chapterId: String, baseline: String, reviewId: String?, proposed: JSONObject) = write {
+    suspend fun closeChapter(
+        bookId: String, chapterId: String, baseline: String, review: JSONObject?, proposed: JSONObject,
+        archivedReview: JSONObject? = null
+    ) = write {
         val chapter = requireNotNull(dao.chapter(bookId, chapterId))
         val book = requireNotNull(dao.book(bookId))
         val data = JSONObject(book.payload)
         val saved = chapterJson(chapter)
-        check(chapter.text == baseline && (reviewId == null || saved.optJSONObject("nativeReview")?.string("id") == reviewId)) {
+        check(chapter.text == baseline &&
+            (review == null || saved.optJSONObject("nativeReview")?.toString() == review.toString())) {
             "正文或候选稿已变更，请重新比对。"
         }
         val handoff = checkedHandoff(proposed, saved)
@@ -481,7 +544,8 @@ internal class Library(context: Context) {
         val changes = archiveHandoff(data, saved, handoff)
         handoff.put("archiveVersion", 1).put("archiveDelta", changes).put("at", System.currentTimeMillis())
         saved.put("handoff", handoff).put("complete", true)
-        if (reviewId != null) saved.remove("nativeReview")
+        if (review != null) saved.remove("nativeReview")
+        if (archivedReview != null) saved.put("nativePreviousReview", archivedReview)
         saveVersion(chapter)
         dao.putChapter(chapterRow(bookId, chapter.volumeId, saved, chapter.position))
         dao.putBook(book.copy(payload = data.toString(), updatedAt = System.currentTimeMillis()))
@@ -515,6 +579,11 @@ internal class Library(context: Context) {
 
     suspend fun snapshotBook(bookId: String) = write { saveBookVersion(bookId) }
 
+    suspend fun replaceFromBackup(bookId: String, backup: JSONObject): String = write {
+        saveBookVersion(bookId)
+        store(backup, bookId)
+    }
+
     suspend fun snapshotChapter(bookId: String, chapterId: String) = write {
         saveVersion(requireNotNull(dao.chapter(bookId, chapterId)) { "章节已删除。" })
     }
@@ -545,7 +614,7 @@ internal class Library(context: Context) {
         val version = requireNotNull(dao.version(bookId, chapterId, versionId)) { "还原点已不存在。" }
         saveVersion(chapter)
         dao.putChapter(chapter.copy(title = version.title, text = version.text,
-            complete = version.complete, payload = version.payload))
+            complete = version.complete, payload = version.payload, wordCount = manuscriptWordCount(version.text)))
         dao.touchBook(bookId, System.currentTimeMillis())
     }
 
@@ -573,7 +642,7 @@ internal class Library(context: Context) {
         val title = payload.remove("title") as String
         val text = payload.remove("text") as String
         val complete = payload.remove("complete") == true
-        return ChapterRow(bookId, id, volumeId, title, position, text, complete, payload.toString())
+        return ChapterRow(bookId, id, volumeId, title, position, text, complete, payload.toString(), manuscriptWordCount(text))
     }
 }
 

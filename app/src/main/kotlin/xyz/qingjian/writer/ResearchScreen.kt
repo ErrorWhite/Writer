@@ -1,28 +1,30 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
+import androidx.compose.material3.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.ChipTabRow
-import io.github.suqi8.coui.kmp.basic.EmptyState
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -40,11 +42,15 @@ private enum class WorkCollection(val label: String, val group: String, val key:
 }
 
 @Composable
-internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modifier = Modifier) {
+internal fun ResearchWorkspace(
+    model: WriterModel, book: BookRow, modifier: Modifier = Modifier,
+    jump: (String, WritingPosition) -> Unit
+) {
     var section by rememberSaveable { mutableStateOf(WorkCollection.Annotation) }
     var query by rememberSaveable { mutableStateOf("") }
     var edit by remember { mutableStateOf<JSONObject?>(null) }
     var delete by remember { mutableStateOf<JSONObject?>(null) }
+    var tryWorldBook by rememberSaveable { mutableStateOf(false) }
     val payload = remember(book.payload) { JSONObject(book.payload) }
     val entries = remember(payload, section) { listFor(payload, section).objects() }
     val worldImport = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
@@ -56,6 +62,16 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
         }
     }
     val title = section.label
+    fun openAnchor(anchor: JSONObject) = model.perform {
+        val chapterId = anchor.string("chapterId")
+        val chapter = readChapter(book.id, chapterId)
+        val position = withContext(Dispatchers.Default) {
+            resolveResearchPosition(chapter, anchor.string("paragraphId"))
+        }
+        requireNotNull(position) { "这段原文已变更或删除，无法定位锚点。" }
+        select(book.id, chapterId)
+        jump(chapterId, position)
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ChipTabRow(WorkCollection.entries.map { it.label }, section.ordinal, { index ->
             section = WorkCollection.entries[index]
@@ -71,6 +87,7 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
                 Text("导入世界书")
             }
             TextButton(onClick = { worldExport.launch(safeFileName(book.title) + "-世界书.json") }) { Text("导出世界书") }
+            TextButton(onClick = { tryWorldBook = true }) { Text("命中试算") }
         }
         val filtered = entries.filter {
             query.isBlank() || it.string("title").contains(query, ignoreCase = true) ||
@@ -87,6 +104,9 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
                         Text(if (item.string("status") == "recovered") "已回收" else "未回收")
                     }
                     Row {
+                        sourceAnchors(item).singleOrNull()?.let { link ->
+                            TextButton(onClick = { openAnchor(link.anchor) }) { Text("查看原文") }
+                        }
                         TextButton(onClick = { edit = item }) { Text("查看与编辑") }
                         TextButton(onClick = { delete = item }) { Text("删除", color = WriterTheme.colorScheme.error) }
                     }
@@ -95,8 +115,9 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
         }
     }
     edit?.let { item ->
-        ResearchDialog(model, book, section, item, payload) { edit = null }
+        ResearchDialog(model, book, section, item, payload, jump = ::openAnchor) { edit = null }
     }
+    if (tryWorldBook) WorldBookTrial(payload) { tryWorldBook = false }
     delete?.let { item ->
         AlertDialog(
             onDismissRequest = { delete = null }, title = { Text("删除这条$title？") },
@@ -126,6 +147,66 @@ internal fun ResearchWorkspace(model: WriterModel, book: BookRow, modifier: Modi
     }
 }
 
+private data class ResearchAnchor(val anchor: JSONObject, val label: String)
+
+private fun sourceAnchors(item: JSONObject): List<ResearchAnchor> = buildList {
+    val anchored = item.optJSONObject("anchor")
+    if (anchored != null) add(ResearchAnchor(anchored, item.string("quote", "原文")))
+    else if (item.string("chapterId").isNotBlank() && item.string("paragraphId").isNotBlank()) {
+        add(ResearchAnchor(item, item.string("quote", "原文")))
+    }
+    item.records("anchors").forEach { link ->
+        link.optJSONObject("anchor")?.let { anchor ->
+            add(ResearchAnchor(anchor, listOf(link.string("role"), link.string("quote"))
+                .filter(String::isNotBlank).joinToString(" · ").ifBlank { "原文" }))
+        }
+    }
+}.distinctBy { it.anchor.string("chapterId") to it.anchor.string("paragraphId") }
+
+internal fun resolveResearchPosition(chapter: JSONObject, paragraphId: String): WritingPosition? {
+    if (paragraphId.isBlank()) return null
+    val source = chapter.string("text")
+    val paragraphs = chapter.records("paragraphs")
+    val index = paragraphs.indexOfFirst { it.string("id") == paragraphId }
+    val span = paragraphSpans(source).getOrNull(index) ?: return null
+    if (span.text != paragraphs[index].string("text")) return null
+    val block = editorBlocks(source).indexOfFirst { span.start < it.end && span.end > it.start }
+    if (block < 0) return null
+    return WritingPosition(span.start, span.end, block, 0)
+}
+
+@Composable
+private fun WorldBookTrial(payload: JSONObject, dismiss: () -> Unit) {
+    var sample by rememberSaveable { mutableStateOf("") }
+    val world = payload.optJSONObject("creative")?.optJSONObject("worldBook")
+    val budget = payload.optJSONObject("context")?.optInt("budget", 12_000)?.coerceIn(1_000, 100_000) ?: 12_000
+    val resolution by produceState<BookWorldResolution?>(null, world, sample, budget) {
+        value = withContext(Dispatchers.Default) { resolveBookWorld(world, sample, budget) }
+    }
+    AlertDialog(
+        onDismissRequest = dismiss, title = { Text("世界书命中试算") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(sample, { sample = it }, Modifier.fillMaxWidth(), minLines = 3,
+                    label = { Text("输入正文或关键词") })
+                resolution?.let { result ->
+                    Text("入选 ${result.chosen.size} 条 · ${result.used} / ${result.budget} 字符")
+                    if (result.hits.isEmpty()) Text("没有命中条目")
+                    result.hits.forEach { hit ->
+                        Text(hit.entry.string("title").ifBlank { "未命名条目" }, style = WriterTheme.typography.titleMedium)
+                        Text(when {
+                            !hit.included -> "命中但超出预算"
+                            hit.round > 0 -> "入选 · 第 ${hit.round} 层递归"
+                            hit.entry.optBoolean("always") -> "入选 · 常驻"
+                            else -> "入选 · 关键词"
+                        })
+                    }
+                }
+            }
+        }, confirmButton = { TextButton(onClick = dismiss) { Text("关闭") } }
+    )
+}
+
 private fun listFor(book: JSONObject, collection: WorkCollection): JSONArray =
     if (collection == WorkCollection.World) book.obj("creative").obj("worldBook").array("entries")
     else book.obj(collection.group).array(collection.key)
@@ -133,7 +214,7 @@ private fun listFor(book: JSONObject, collection: WorkCollection): JSONArray =
 @Composable
 private fun ResearchDialog(
     model: WriterModel, book: BookRow, collection: WorkCollection,
-    source: JSONObject, payload: JSONObject, dismiss: () -> Unit
+    source: JSONObject, payload: JSONObject, jump: (JSONObject) -> Unit, dismiss: () -> Unit
 ) {
     var title by rememberSaveable { mutableStateOf(source.string("title", source.string("kind"))) }
     var body by rememberSaveable { mutableStateOf(source.string(collection.body)) }
@@ -143,14 +224,26 @@ private fun ResearchDialog(
     var flag by rememberSaveable { mutableStateOf(source.optBoolean("confirmed", true)) }
     var enabled by rememberSaveable { mutableStateOf(source.optBoolean("enabled", true)) }
     var always by rememberSaveable { mutableStateOf(source.optBoolean("always")) }
+    var caseSensitive by rememberSaveable { mutableStateOf(source.optBoolean("caseSensitive")) }
+    var secondaryLogic by rememberSaveable { mutableStateOf(source.string("logic", "any")) }
+    var recursionDelay by rememberSaveable { mutableStateOf(source.optInt("recursionDelay").coerceIn(0, 3).toString()) }
+    var excludeRecursion by rememberSaveable { mutableStateOf(source.optBoolean("excludeRecursion")) }
+    var preventRecursion by rememberSaveable { mutableStateOf(source.optBoolean("preventRecursion")) }
     var kind by rememberSaveable { mutableStateOf(source.string("kind", "character")) }
     var from by rememberSaveable { mutableStateOf(source.string("from")) }
     var to by rememberSaveable { mutableStateOf(source.string("to")) }
     var anchorText by rememberSaveable { mutableStateOf("") }
     var anchorRole by rememberSaveable { mutableStateOf("线索") }
+    var anchorChapter by rememberSaveable { mutableStateOf(book.activeId) }
+    var chapterPicker by remember { mutableStateOf(false) }
     var conflict by rememberSaveable { mutableStateOf(false) }
     val events = payload.optJSONObject("research")?.records("events").orEmpty()
     val anchored = collection in setOf(WorkCollection.Annotation, WorkCollection.Event, WorkCollection.Foreshadow)
+    val chapters = if (anchored) {
+        val entries by remember(book.id) { model.library.directory(book.id) }
+            .collectAsStateWithLifecycle(initialValue = emptyList())
+        entries
+    } else emptyList()
     AlertDialog(
         onDismissRequest = dismiss, title = { Text(collection.label) },
         text = {
@@ -159,9 +252,27 @@ private fun ResearchDialog(
                     OutlinedTextField(title, { title = it }, singleLine = true, label = { Text("标题") })
                 }
                 OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth(), minLines = 3, label = { Text("内容") })
+                sourceAnchors(source).forEach { link ->
+                    TextButton(onClick = { jump(link.anchor) }) {
+                        Text(link.label, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                }
                 if (anchored) {
-                    OutlinedTextField(anchorText, { anchorText = it }, label = { Text("当前章的原文引句") })
-                    source.optJSONObject("anchor")?.let { Text("已有正文锚点") }
+                    Box {
+                        TextButton(onClick = { chapterPicker = true }) {
+                            Text(chapters.firstOrNull { it.id == anchorChapter }?.title ?: "选择锚点章节")
+                        }
+                        DropdownMenu(chapterPicker, { chapterPicker = false }) {
+                            chapters.forEach { chapter ->
+                                DropdownMenuItem(chapter.title, onClick = {
+                                    anchorChapter = chapter.id
+                                    chapterPicker = false
+                                    conflict = false
+                                })
+                            }
+                        }
+                    }
+                    OutlinedTextField(anchorText, { anchorText = it; conflict = false }, label = { Text("所选章节的原文引句") })
                 }
                 when (collection) {
                     WorkCollection.Relation -> {
@@ -177,9 +288,18 @@ private fun ResearchDialog(
                     WorkCollection.World -> {
                         OutlinedTextField(keys, { keys = it }, label = { Text("关键词，以逗号分隔") })
                         OutlinedTextField(secondary, { secondary = it }, label = { Text("次级关键词") })
+                        ChoiceRow(listOf("any" to "任一", "all" to "全部", "not-any" to "均未出现", "not-all" to "未集齐"),
+                            secondaryLogic) { secondaryLogic = it }
                         OutlinedTextField(priority, { priority = it }, singleLine = true, label = { Text("优先级") })
                         CheckOption("常驻", always) { always = it }
                         CheckOption("启用", enabled) { enabled = it }
+                        CheckOption("区分大小写", caseSensitive) { caseSensitive = it }
+                        CheckOption("仅匹配原始文本", excludeRecursion) { excludeRecursion = it }
+                        CheckOption("内容不再触发其他条目", preventRecursion) { preventRecursion = it }
+                        if (!always && !excludeRecursion) {
+                            Text("从第几层开始匹配")
+                            ChoiceRow((0..3).map { it.toString() to it.toString() }, recursionDelay) { recursionDelay = it }
+                        }
                     }
                     WorkCollection.Foreshadow -> {
                         Text("锚点用途")
@@ -189,7 +309,7 @@ private fun ResearchDialog(
                     WorkCollection.Memory, WorkCollection.Reference -> CheckOption("启用", enabled) { enabled = it }
                     else -> Unit
                 }
-                if (conflict) Text("引句在当前章没有唯一匹配，请复制完整段落再试。", color = WriterTheme.colorScheme.error)
+                if (conflict) Text("引句在所选章节没有唯一匹配，请复制完整段落再试。", color = WriterTheme.colorScheme.error)
             }
         },
         confirmButton = {
@@ -203,6 +323,9 @@ private fun ResearchDialog(
                             WorkCollection.Card -> changed.put("kind", kind).put("confirmed", flag)
                             WorkCollection.World -> changed.put("keys", keyList(keys)).put("secondary", keyList(secondary))
                                 .put("always", always).put("enabled", enabled).put("priority", (priority.toIntOrNull() ?: 100).coerceIn(0, 1000))
+                                .put("logic", secondaryLogic).put("caseSensitive", caseSensitive)
+                                .put("excludeRecursion", excludeRecursion).put("preventRecursion", preventRecursion)
+                                .put("recursionDelay", if (excludeRecursion) 0 else recursionDelay.toInt())
                             WorkCollection.Reference, WorkCollection.Memory -> changed.put("enabled", enabled)
                             WorkCollection.Foreshadow -> { changed.array("anchors"); if (!changed.has("status")) changed.put("status", "open") }
                             else -> Unit
@@ -213,23 +336,21 @@ private fun ResearchDialog(
                             if (index >= 0) list.put(index, changed) else list.put(changed)
                         }
                         if (anchored && anchorText.isNotBlank()) {
-                            val snapshot = export(book.id)
-                            val chapter = snapshot.records("volumes").flatMap { it.records("chapters") }
-                                .first { it.string("id") == book.activeId }
+                            val chapter = readChapter(book.id, anchorChapter)
                             editChapter(chapter, chapter.string("text"), ensureParagraphs = true)
                             val matches = chapter.records("paragraphs").filter { it.string("text").contains(anchorText.trim()) }
                             if (matches.size != 1) { conflict = true; return@perform }
-                            val anchor = JSONObject().put("chapterId", book.activeId).put("paragraphId", matches.single().string("id"))
+                            val anchor = JSONObject().put("chapterId", anchorChapter).put("paragraphId", matches.single().string("id"))
                             if (collection == WorkCollection.Foreshadow) {
                                 val anchors = changed.array("anchors")
                                 anchors.put(JSONObject().put("id", newId()).put("anchor", anchor)
                                     .put("role", anchorRole).put("quote", anchorText.trim()))
                                 if (anchorRole == "回收") changed.put("status", "recovered")
                             } else changed.put("anchor", anchor)
-                            mutateChapter(book.id, book.activeId, ::write) { it.put("paragraphs", chapter.array("paragraphs")) }
+                            mutateChapter(book.id, anchorChapter, ::write) { it.put("paragraphs", chapter.array("paragraphs")) }
                         } else {
                             require(collection !in setOf(WorkCollection.Annotation, WorkCollection.Event) || changed.has("anchor")) {
-                                "请填写当前章的原文引句作为锚点。"
+                                "请填写所选章节的原文引句作为锚点。"
                             }
                             mutateBook(book.id, ::write)
                         }

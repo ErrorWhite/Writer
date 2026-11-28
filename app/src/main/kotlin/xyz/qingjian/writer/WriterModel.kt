@@ -13,8 +13,10 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -67,7 +69,9 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private val vault = ProviderVault(application)
     private val client = ModelClient()
     private val studio = StudioServer(client, application, vault)
+    private val composingChapters = mutableSetOf<DraftKey>()
     private val bookSync = BookSync(application, studio, library, lock, flush = { bookId ->
+        check(composingChapters.none { it.bookId == bookId }) { "输入法正在组字，稍后自动同步。" }
         flush()
         check(mutableDrafts.value.none { (key, draft) -> key.bookId == bookId && draft.state == SaveState.Failed }) {
             "待同步的正文尚未保存到本机。"
@@ -257,8 +261,9 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         usage?.let {
             lock.withLock {
                 recordUsage(UsageEntry(java.time.LocalDate.now().toString(), intent,
-                    account?.name ?: profile?.name.orEmpty(), account?.model ?: profile?.model.orEmpty(),
-                    it.input, it.output, it.cached))
+                    it.accountName.ifBlank { account?.name ?: profile?.name.orEmpty() },
+                    it.model.ifBlank { account?.model ?: profile?.model.orEmpty() },
+                    it.input, it.output, it.cached, it.accountId))
             }
         }
         return JSONObject().put("text", text)
@@ -481,6 +486,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         else bookSync.enable(studioEndpoint.value, id)
     }
 
+    fun cancelSynchronizedDeletion(id: String) = syncAction { bookSync.cancelDelete(id) }
+
     fun openSyncedBook(id: String, opened: (String) -> Unit) = syncAction {
         bookSync.import(studioEndpoint.value, id)
         closeStudioBooks()
@@ -541,15 +548,16 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         intent: String,
         skillBookId: String? = null,
         prepare: suspend Library.() -> Pair<String, List<ModelMessage>>,
+        interrupted: (suspend Library.(String) -> Unit)? = null,
         accept: suspend Library.(String) -> Unit = {}
     ) {
-        if (requests[id]?.isActive == true) return
+        if (requests[id]?.isCompleted == false) return
         val selected = activeAccount.value
         val planProfile = selected?.takeIf { it.startsWith("plan:") }?.removePrefix("plan:")?.let { id ->
             mutablePlanProfiles.value.firstOrNull { it.id == id && it.connected }
         }
         val studioAddress = studioEndpoint.value.takeIf { selected == STUDIO_ACCOUNT }
-        val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == activeAccount.value && it.enabled }
+        val account = mutableAccounts.value.orEmpty().firstOrNull { it.id == selected && it.enabled }
         if (studioAddress != null && !studio.connected(studioAddress)) {
             notice("请登录青简服务器，再使用 Codex。")
             return
@@ -558,8 +566,20 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             notice("请先在设置中启用并选中一个模型账号。")
             return
         }
-        mutableGenerations.update { it + (id to Generation(running = true)) }
-        requests[id] = viewModelScope.launch {
+        mutableGenerations.update { it + (id to Generation(running = true, stage = "准备上下文")) }
+        val request = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            suspend fun retainInterrupted() {
+                val retain = interrupted ?: return
+                val text = mutableGenerations.value[id]?.text.orEmpty()
+                if (text.isBlank()) return
+                try {
+                    lock.withLock { retain(library, text) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    notice("未能写入中断输出，当前会话仍可查看。")
+                }
+            }
             try {
                 val (system, messages) = lock.withLock {
                     flush()
@@ -567,7 +587,10 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                     library.prepare()
                 }
                 var meter: ModelUsage? = null
-                val collectText: (String) -> Unit = { chunk -> updateGeneration(id) { it.copy(text = it.text + chunk) } }
+                updateGeneration(id) { it.copy(stage = "等待模型响应") }
+                val collectText: (String) -> Unit = { chunk ->
+                    updateGeneration(id) { it.copy(text = it.text + chunk, stage = "正在生成") }
+                }
                 val collectReasoning: (String) -> Unit = { chunk ->
                     updateGeneration(id) { it.copy(reasoning = (it.reasoning + chunk).takeLast(12_000)) }
                 }
@@ -577,33 +600,49 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
                             approvedScripts(studioAddress, skillBookId)
                         } else emptyList()
                         studio.generate(studioAddress, intent, system, messages, collectText, collectReasoning,
-                            { meter = it }, scripts)
+                            { meter = it }, scripts, stage = { stage -> updateGeneration(id) { it.copy(stage = stage) } })
                     }
                     planProfile != null -> plan.generate(planProfile.id, system, messages, collectText, collectReasoning) { meter = it }
                     else -> client.generate(requireNotNull(account), system, messages, collectText, collectReasoning) { meter = it }
                 }
+                updateGeneration(id) { it.copy(stage = "整理候选稿", text = text) }
                 lock.withLock {
-                    flush()
-                    library.accept(text)
                     meter?.let {
-                        val serverModel = mutableStudioStatus.value?.optJSONObject("cli")?.string("model").orEmpty()
                         val entry = UsageEntry(java.time.LocalDate.now().toString(), intent,
-                            account?.name ?: planProfile?.name ?: "青简 Codex",
-                            account?.model ?: planProfile?.model ?: serverModel,
-                            it.input, it.output, it.cached)
+                            it.accountName.ifBlank { account?.name ?: planProfile?.name ?: "青简 Codex" },
+                            it.model.ifBlank { account?.model ?: planProfile?.model.orEmpty() },
+                            it.input, it.output, it.cached, it.accountId)
                         recordUsage(entry)
                     }
+                    flush()
+                    withContext(NonCancellable) {
+                        library.accept(text)
+                        updateGeneration(id) { it.copy(running = false, completed = true, stage = "已完成") }
+                    }
                 }
-                updateGeneration(id) { it.copy(running = false, completed = true) }
             } catch (error: CancellationException) {
-                updateGeneration(id) { it.copy(running = false, error = "已停止") }
+                if (mutableGenerations.value[id]?.completed != true) {
+                    withContext(NonCancellable) { retainInterrupted() }
+                    updateGeneration(id) { it.copy(running = false, stage = "已停止") }
+                }
                 throw error
             } catch (error: Exception) {
-                updateGeneration(id) { it.copy(running = false, error = error.localizedMessage ?: "模型请求失败。") }
-            } finally {
-                requests.remove(id)
+                retainInterrupted()
+                updateGeneration(id) {
+                    it.copy(running = false, stage = "生成中断", error = error.localizedMessage ?: "模型请求失败。")
+                }
             }
         }
+        requests[id] = request
+        request.invokeOnCompletion {
+            viewModelScope.launch {
+                if (requests[id] === request) {
+                    requests.remove(id)
+                    updateGeneration(id) { if (it.running) it.copy(running = false, stage = "已停止") else it }
+                }
+            }
+        }
+        request.start()
     }
 
     private suspend fun recordUsage(entry: UsageEntry) {
@@ -617,7 +656,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     fun stopGeneration(id: String) { requests[id]?.cancel() }
 
     fun clearGeneration(id: String) {
-        if (requests[id]?.isActive != true) mutableGenerations.update { it - id }
+        if (requests[id]?.isCompleted != false) mutableGenerations.update { it - id }
     }
 
     private fun updateGeneration(id: String, transform: (Generation) -> Generation) {
@@ -627,7 +666,7 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     private fun readUsage() = JSONArray(usageStorage.getString("entries", "[]")).objects().map { row ->
         fun number(key: String) = (row.opt(key) as? Number)?.toInt()
         UsageEntry(row.string("day"), row.string("intent"), row.string("account"), row.string("model"),
-            number("input"), number("output"), number("cached"))
+            number("input"), number("output"), number("cached"), row.string("accountId"))
     }
 
     fun importRoleplayCard(bookId: String, uri: Uri, opened: (String) -> Unit) = perform {
@@ -640,6 +679,12 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             optJSONArray("sessions")!!.put(session)
         } }
         opened(session.string("id"))
+    }
+
+    fun importRoleplayAvatar(bookId: String, cardId: String, uri: Uri) = perform {
+        val png = withContext(Dispatchers.IO) { roleplayAvatar(read(uri, 6, "角色头像不能超过 6 MB。")) }
+        mutateBook(bookId) { findCard(it, cardId).put("png", png) }
+        notice("角色头像已更新")
     }
 
     fun importSkill(bookId: String, uri: Uri) = perform {
@@ -740,6 +785,10 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
         savePending()
     }
 
+    fun setComposing(key: DraftKey, composing: Boolean) {
+        if (composing) composingChapters.add(key) else composingChapters.remove(key)
+    }
+
     fun retry(key: DraftKey) {
         val draft = mutableDrafts.value[key] ?: return
         mutableDrafts.value += key to draft.copy(state = SaveState.Saving)
@@ -815,7 +864,8 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
             return@perform
         }
         val replace = existing?.id?.takeIf { overwrite }
-        val id = store(preview.book, replace, copy = existing != null && !overwrite)
+        val id = if (replace == null) store(preview.book, null, copy = existing != null)
+            else replaceFromBackup(replace, preview.book)
         if (replace != null) mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != replace }
         mutableImport.value = null
         opened(id)
@@ -869,11 +919,11 @@ internal class WriterModel(private val application: Application) : AndroidViewMo
     }
 
     fun deleteBook(bookId: String, deleted: () -> Unit) = syncAction {
-        bookSync.delete(bookId)
-        perform {
-            remove(bookId)
+        if (bookSync.delete(bookId)) {
             mutableDrafts.value = mutableDrafts.value.filterKeys { it.bookId != bookId }
             deleted()
+        } else if (syncedBooks.value[bookId]?.deleteDigest != null) {
+            notice("已保存待同步删除记录，可以在作品管理中取消。")
         }
     }
 
@@ -912,13 +962,14 @@ private fun compressImage(bytes: ByteArray): ByteArray {
 }
 
 internal data class Generation(val running: Boolean, val text: String = "", val reasoning: String = "",
-    val completed: Boolean = false, val error: String? = null)
+    val completed: Boolean = false, val error: String? = null, val stage: String = "")
 
 internal data class UsageEntry(
     val day: String, val intent: String, val account: String, val model: String,
-    val input: Int?, val output: Int?, val cached: Int?
+    val input: Int?, val output: Int?, val cached: Int?, val accountId: String = ""
 ) {
     fun json() = JSONObject().put("day", day).put("intent", intent).put("account", account).put("model", model)
+        .put("accountId", accountId)
         .put("input", input ?: JSONObject.NULL).put("output", output ?: JSONObject.NULL).put("cached", cached ?: JSONObject.NULL)
 }
 

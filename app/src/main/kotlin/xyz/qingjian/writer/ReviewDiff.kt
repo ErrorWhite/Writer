@@ -1,6 +1,6 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import io.github.suqi8.coui.kmp.basic.Text
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,9 +81,13 @@ internal fun alignDiff(before: String, after: String): List<DiffLine> {
 }
 
 @Composable
-internal fun ReviewDiff(before: String, after: String, dismiss: () -> Unit) {
+internal fun ReviewDiff(
+    before: String, after: String, title: String = "比对原文与候选",
+    beforeLabel: String = "原文", afterLabel: String = "候选", onlyChanges: Boolean = false,
+    dismiss: () -> Unit
+) {
     var sideBySide by rememberSaveable { mutableStateOf(false) }
-    var changesOnly by rememberSaveable { mutableStateOf(false) }
+    var changesOnly by rememberSaveable { mutableStateOf(onlyChanges) }
     val rows by produceState<List<DiffLine>?>(null, before, after) {
         value = withContext(Dispatchers.Default) { alignDiff(before, after) }
     }
@@ -91,7 +95,7 @@ internal fun ReviewDiff(before: String, after: String, dismiss: () -> Unit) {
         Surface(Modifier.fillMaxSize(), color = WriterTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(14.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("比对原文与候选", Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
+                    Text(title, Modifier.weight(1f), style = WriterTheme.typography.headlineSmall)
                     TextButton(onClick = dismiss) { Text("返回") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -99,11 +103,12 @@ internal fun ReviewDiff(before: String, after: String, dismiss: () -> Unit) {
                     FilterChip(changesOnly, { changesOnly = !changesOnly }, label = "仅改动")
                 }
                 if (sideBySide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("原文", Modifier.weight(1f), style = WriterTheme.typography.labelLarge)
-                    Text("候选", Modifier.weight(1f), style = WriterTheme.typography.labelLarge)
+                    Text(beforeLabel, Modifier.weight(1f), style = WriterTheme.typography.labelLarge)
+                    Text(afterLabel, Modifier.weight(1f), style = WriterTheme.typography.labelLarge)
                 }
                 val lines = rows
                 if (lines == null) Text("正在计算差异…")
+                else if (changesOnly && lines.none(DiffLine::changed)) Text("两个版本一致")
                 else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     items(if (changesOnly) lines.filter(DiffLine::changed) else lines) { line ->
                         val removed = if (line.changed) WriterTheme.colorScheme.errorContainer else Color.Transparent

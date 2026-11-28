@@ -8,6 +8,14 @@ import org.junit.Test
 
 class ManuscriptTest {
     @Test
+    fun wordCountsTreatHanIndividuallyAndLatinOrNumericRunsAsWords() {
+        assertEquals(6, manuscriptWordCount("青简 Android 17，测试。"))
+        assertEquals(0, manuscriptWordCount("＊　＊　＊"))
+        assertEquals(900, bookChapterGoal(JSONObject("""{"aiSetup":{"chapterTarget":900}}""")))
+        assertEquals(0, bookChapterGoal(JSONObject("""{"goal":0,"aiSetup":{"chapterTarget":900}}""")))
+    }
+
+    @Test
     fun preservesCrossPlatformExtensionsAndIdsWhenEditing() {
         val book = Manuscript.read("""
             {

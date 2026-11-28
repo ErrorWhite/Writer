@@ -7,11 +7,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,21 +23,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mangi.eta.data.provider.CommunityCatalog
 import io.github.mangi.eta.data.provider.CommunityCatalogProvider
-import io.github.suqi8.coui.kmp.basic.RadioButton
-import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.EmptyState
-import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.SegmentButton
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
-import io.github.suqi8.coui.kmp.overlay.OverlayBottomSheet
-import io.github.suqi8.coui.kmp.preference.ArrowPreference
-import io.github.suqi8.coui.kmp.preference.SwitchPreference
+import com.itos.coui.layout.Scaffold
+import com.itos.coui.sheet.BottomSheet
 
 @Composable
 internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
     val accounts by model.accounts.collectAsStateWithLifecycle()
     val selected by model.activeAccount.collectAsStateWithLifecycle()
-    val usage by model.usage.collectAsStateWithLifecycle()
     val images by model.imagesEnabled.collectAsStateWithLifecycle()
     var edit by remember { mutableStateOf<ProviderAccount?>(null) }
     var showUsage by remember { mutableStateOf(false) }
@@ -96,22 +89,30 @@ internal fun ProvidersScreen(model: WriterModel, back: () -> Unit) {
             catalog = null
         }
     }
-    if (showUsage) AlertDialog(
-        onDismissRequest = { showUsage = false }, title = { Text("使用统计") },
+    if (showUsage) ModelUsageDialog(model) { showUsage = false }
+}
+
+@Composable
+internal fun ModelUsageDialog(model: WriterModel, dismiss: () -> Unit) {
+    val usage by model.usage.collectAsStateWithLifecycle()
+    AlertDialog(
+        onDismissRequest = dismiss, title = { Text("AI 使用量") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (usage.isEmpty()) EmptyState(title = "尚无模型用量记录")
                 usage.groupBy { it.day }.entries.toList().takeLast(30).asReversed().forEach { (day, rows) ->
                     Text("$day · ${rows.size} 次", style = WriterTheme.typography.titleMedium)
-                    rows.groupBy { it.account to it.intent }.forEach { (key, entries) ->
+                    rows.groupBy { Triple(it.accountId.ifBlank { it.account }, it.intent, it.model) }.forEach { (key, entries) ->
                         fun sum(value: (UsageEntry) -> Int?): String =
-                            entries.mapNotNull(value).takeIf { it.isNotEmpty() }?.sum()?.toString() ?: "未知"
-                        Text("${key.first} · ${key.second}\n输入 ${sum(UsageEntry::input)}  输出 ${sum(UsageEntry::output)}  缓存 ${sum(UsageEntry::cached)}")
+                            entries.mapNotNull(value).takeIf { it.isNotEmpty() }?.sumOf(Int::toLong)?.toString() ?: "未知"
+                        val account = entries.last().account
+                        val heading = listOf(account, key.third, key.second).filter(String::isNotBlank).joinToString(" · ")
+                        Text("$heading\n输入 ${sum(UsageEntry::input)}  输出 ${sum(UsageEntry::output)}  缓存 ${sum(UsageEntry::cached)}")
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { showUsage = false }) { Text("关闭") } }
+        confirmButton = { TextButton(onClick = dismiss) { Text("关闭") } }
     )
 }
 
@@ -154,7 +155,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
     var presets by remember { mutableStateOf(false) }
     var protocols by remember { mutableStateOf(false) }
     var choices by remember { mutableStateOf<List<String>>(emptyList()) }
-    var models by remember { mutableStateOf(false) }
+    val models = remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var deleting by remember { mutableStateOf(false) }
@@ -231,7 +232,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                         result.onSuccess {
                             choices = it
                             status = "连接成功 · ${it.size} 个模型"
-                            models = it.isNotEmpty()
+                            models.value = it.isNotEmpty()
                         }.onFailure { status = it.localizedMessage ?: "连接失败。" }
                     }
                 }) { Text("测试连接并拉取模型") }
@@ -262,7 +263,7 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                             connecting = false
                             result.onSuccess {
                                 choices = it
-                                models = it.isNotEmpty()
+                                models.value = it.isNotEmpty()
                                 status = if (it.isEmpty()) "未返回模型，可直接填写 ID。" else ""
                             }.onFailure { status = it.localizedMessage ?: "读取模型失败。" }
                         }
@@ -272,13 +273,14 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
             if (status.isNotBlank()) Text(status, style = WriterTheme.typography.bodySmall)
         }
     }
-    if (models) OverlayBottomSheet(show = true, onDismissRequest = { models = false }, title = "选择模型") {
+    BottomSheet(visible = models, dismissDescription = "关闭模型选择", titleContent = { Text("选择模型") },
+        showDragHandle = true, scrollableContent = false) {
             var query by remember { mutableStateOf("") }
             Column(Modifier.padding(20.dp)) {
                 WriterSearch(query, { query = it }, "搜索模型")
-                Column(Modifier.verticalScroll(rememberScrollState())) {
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
                     choices.asSequence().filter { it.contains(query, ignoreCase = true) }.take(60).forEach { choice ->
-                        TextButton(onClick = { value = value.copy(model = choice); models = false }) { Text(choice) }
+                        TextButton(onClick = { value = value.copy(model = choice); models.value = false }) { Text(choice) }
                     }
                 }
             }

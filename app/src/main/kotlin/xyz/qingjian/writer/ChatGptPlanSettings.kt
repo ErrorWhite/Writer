@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import io.github.suqi8.coui.kmp.basic.Text
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,12 +25,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.suqi8.coui.kmp.basic.Button
-import io.github.suqi8.coui.kmp.basic.ButtonDefaults
-import io.github.suqi8.coui.kmp.basic.RadioButton
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
-import io.github.suqi8.coui.kmp.preference.ArrowPreference
-import io.github.suqi8.coui.kmp.preference.PreferenceCategory
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 
 private const val usageUrl = "https://chatgpt.com/settings/usage"
 
@@ -49,7 +45,7 @@ internal fun ChatGptPlanSettings(model: WriterModel, active: String?) {
             select = it
             if (profiles.isEmpty()) welcome = true
         }
-    }, colors = ButtonDefaults.buttonColorsPrimary(color = Color.Black, contentColor = Color.White)) {
+    }, colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White)) {
         Image(painterResource(R.drawable.chatgpt_sign_in), null, Modifier.size(21.dp))
         Text("Continue with ChatGPT", Modifier.padding(start = 9.dp), color = Color.White)
     }

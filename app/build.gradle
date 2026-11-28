@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId 'io.wboat.writer'
-        minSdk 26
+        minSdk 31
         targetSdk 35
         versionCode providers.gradleProperty('qingjianVersionCode').map { it.toInteger() }.getOrElse(2)
         versionName '0.4.0'
@@ -68,8 +68,8 @@ android {
 ksp { arg('room.schemaLocation', "$projectDir/schemas") }
 
 dependencies {
-    implementation 'io.github.suqi8.coui.kmp:coui-ui-android:2.1.0'
-    implementation 'io.github.suqi8.coui.kmp:coui-preference-android:2.1.0'
+    implementation 'io.github.itoseo:coui:0.0.1-alpha20'
+    implementation 'androidx.compose.material3:material3:1.4.0'
     implementation 'androidx.activity:activity-compose:1.13.0'
     implementation 'androidx.compose.material:material-icons-core:1.7.8'
     implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.11.1'

@@ -154,7 +154,10 @@ internal class ProviderVault(context: Context) {
 }
 
 internal data class ModelMessage(val role: String, val content: String)
-internal data class ModelUsage(val input: Int?, val output: Int?, val cached: Int?)
+internal data class ModelUsage(
+    val input: Int?, val output: Int?, val cached: Int?,
+    val accountId: String = "", val accountName: String = "", val model: String = ""
+)
 
 internal class ModelClient {
     private val http = OkHttpClient.Builder()
@@ -210,7 +213,10 @@ internal class ModelClient {
         onUsage: (ModelUsage) -> Unit = {}
     ): String {
         require(account.enabled && account.key.isNotBlank() && account.model.isNotBlank()) { "请选择已启用的模型账号。" }
-        if (account.protocol.google) return generateGoogle(account, system, messages, onText, onReasoning, onUsage)
+        val metered: (ModelUsage) -> Unit = {
+            onUsage(it.copy(accountId = account.id, accountName = account.name, model = it.model.ifBlank { account.model }))
+        }
+        if (account.protocol.google) return generateGoogle(account, system, messages, onText, onReasoning, metered)
         val input = JSONArray(messages.map { JSONObject().put("role", it.role).put("content", it.content) })
         val body = JSONObject().put("model", account.model).put("stream", true)
         when (account.protocol) {
@@ -237,6 +243,10 @@ internal class ModelClient {
                 }
                 val frame = JSONObject(data)
                 val type = frame.string("type")
+                val reportedModel = frame.string("model").ifBlank {
+                    frame.optJSONObject("response")?.string("model").orEmpty()
+                }.ifBlank { frame.optJSONObject("message")?.string("model").orEmpty() }
+                if (reportedModel.isNotBlank()) usage = usage.copy(model = reportedModel)
                 val error = frame.optJSONObject("error")
                 check(error == null && type !in setOf("error", "response.failed", "response.incomplete")) {
                     "供应商中止了生成。"
@@ -262,7 +272,7 @@ internal class ModelClient {
                 val meter = frame.optJSONObject("usage") ?: frame.optJSONObject("response")?.optJSONObject("usage")
                     ?: frame.optJSONObject("message")?.optJSONObject("usage")
                 if (meter != null) {
-                    usage = ModelUsage(
+                    usage = usage.copy(
                         meter.number("input_tokens") ?: meter.number("prompt_tokens") ?: usage.input,
                         meter.number("output_tokens") ?: meter.number("completion_tokens") ?: usage.output,
                         meter.optJSONObject("input_tokens_details")?.number("cached_tokens")
@@ -273,7 +283,7 @@ internal class ModelClient {
                 terminal = type == "response.completed" || type == "message_stop"
                 !terminal
             }
-            onUsage(usage)
+            metered(usage)
             check(terminal) { "响应中途断开，已接收的内容可保留为草稿。" }
             check(result.isNotBlank()) { "模型未返回正文。" }
             result.toString()

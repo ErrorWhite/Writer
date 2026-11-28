@@ -22,7 +22,11 @@ test('Codex 账号独立授权、取消后保留其他登录，切换后使用�
       signal.addEventListener('abort', () => reject(signal.reason), { once: true })
     })
     lastHome = home
-    return Promise.resolve(result(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '独立会话' } })))
+    return Promise.resolve(result([
+      { type: 'item.completed', item: { type: 'agent_message', text: '独立会话' } },
+      { type: 'turn.completed', model: 'fixture-resolved-model',
+        usage: { input_tokens: 42, output_tokens: 7, cached_input_tokens: 12 } },
+    ].map(event => JSON.stringify(event)).join('\n')))
   }
   const env = { QINGJIAN_CODEX_BIN: process.execPath }
   const codex = createCodexSession(env, root, execute)
@@ -43,6 +47,9 @@ test('Codex 账号独立授权、取消后保留其他登录，切换后使用�
   assert.deepEqual(status.accounts.map(account => account.connected), [true, true, false])
   const restarted = createCodexSession(env, root, execute)
   const generated = await restarted.generate({ prompt: '内容', instructions: '写作' })
+  assert.equal(generated.model, 'fixture-resolved-model')
+  assert.deepEqual(generated.usage, { input: 42, output: 7, cached: 12 })
   assert.equal(generated.account, '个人')
+  assert.equal(generated.accountId, one.id)
   assert.equal(lastHome, oneHome)
 })

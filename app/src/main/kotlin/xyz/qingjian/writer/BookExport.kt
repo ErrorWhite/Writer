@@ -37,9 +37,10 @@ internal enum class ExportFormat(val extension: String, val mime: String, val la
     }
 }
 
-private fun xml(text: String): String = text.replace("&", "&amp;")
+private val illegalXmlCharacters = Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\uFFFE\\uFFFF]")
+
+private fun xml(text: String): String = text.replace(illegalXmlCharacters, "").replace("&", "&amp;")
     .replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")
-    .replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\uFFFE\\uFFFF]"), "")
 
 private fun page(title: String, body: String) = """
     <?xml version="1.0" encoding="UTF-8"?>
@@ -102,7 +103,7 @@ private fun writeEpub(book: JSONObject, output: OutputStream) {
             val links = chapters.joinToString("") { chapter ->
                 val id = "chapter-${++count}"
                 val name = chapter.string("title")
-                val markdown = manuscriptMarkdown(chapter.string("text"))
+                val markdown = manuscriptMarkdown(chapter.string("text")).replace(illegalXmlCharacters, "")
                 val rendered = renderer.render(parser.parse(markdown))
                 addPage(id, name, "<h1>${xml(name)}</h1>" + rendered)
                 """<li><a href="$id.xhtml">${xml(name)}</a></li>"""

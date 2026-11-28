@@ -1,5 +1,5 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
-import { clearSnapshot, pendingSnapshots, retainSnapshot } from './book-journal.js'
+import { clearSnapshot, pendingSnapshot, retainSnapshot } from './book-journal.js'
 
 const bridge = import.meta.env?.MODE === 'android' ? window.QingjianWorkbench : undefined
 export const androidWorkbench = Boolean(bridge)
@@ -35,16 +35,23 @@ export function androidCall(operation, argument = {}, signal = AbortSignal.timeo
   })
 }
 
+export class AndroidJournalRecoveryError extends Error {}
+
 export async function openAndroidBook() {
   let session = await androidCall('book')
-  const edit = (await pendingSnapshots().catch(() => [])).find(item => item.id === session.book.id)
-  if (edit) {
-    const result = await androidCall('save', edit)
-    await clearSnapshot(edit.id, edit.version)
-    session = await androidCall('book')
-    session.recoveredConflict = result.conflict
+  try {
+    const edit = await pendingSnapshot(session.book.id)
+    if (edit) {
+      const result = await androidCall('save', edit)
+      await clearSnapshot(session.book.id, edit.version)
+      session = await androidCall('book')
+      session.replayedJournal = true
+      session.recoveredConflict = result.conflict
+    }
+    return session
+  } catch (error) {
+    throw new AndroidJournalRecoveryError('无法恢复本机写作记录。请重试。', { cause: error })
   }
-  return session
 }
 
 export function useAndroidBookBackup(manuscript, session) {

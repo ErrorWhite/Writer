@@ -10,6 +10,10 @@ on:
         description: Build an APK with the permanent release signing key
         type: boolean
         default: false
+      upgrade_from_run:
+        description: Workflow run ID containing the previous signed APK
+        type: string
+        default: '45872089797'
 
 permissions:
   contents: read
@@ -22,6 +26,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/android-workbench
+      - name: Check desktop data and server compatibility
+        working-directory: desktop
+        run: node --test server/creative-tools.test.mjs server/book-sync.test.mjs server/codex-session.test.mjs
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -90,8 +97,12 @@ jobs:
             | tee "$RUNNER_TEMP/qingjian-instrumentation.log"
           adb logcat -d -b crash -v brief | tee "$RUNNER_TEMP/qingjian-crash.log"
           adb pull /sdcard/Download/qingjian-qa "$RUNNER_TEMP/qingjian-qa" || true
-          grep -Eq '^OK \([2-9][0-9]* tests\)' "$RUNNER_TEMP/qingjian-instrumentation.log"
-          for name in chapter providers provider-connection provider-models; do
+          grep -Eq '^OK \(([2-9]|[1-9][0-9]+) tests\)' "$RUNNER_TEMP/qingjian-instrumentation.log"
+          adb exec-out run-as io.wboat.writer.debug cat files/android-pc-manuscript.json \
+            > "$RUNNER_TEMP/qingjian-qa/android-pc-manuscript.json"
+          QINGJIAN_ANDROID_ROUNDTRIP="$RUNNER_TEMP/qingjian-qa/android-pc-manuscript.json" \
+            node --test --test-name-pattern='PC imports the exchange manuscript' desktop/server/creative-tools.test.mjs
+          for name in chapter chapter-tablet providers provider-connection provider-models; do
             test -s "$RUNNER_TEMP/qingjian-qa/$name.png"
           done
       - uses: actions/upload-artifact@v4
@@ -163,6 +174,10 @@ jobs:
             apk="app/build/outputs/apk/release/app-$abi-release.apk"
             report="release-artifacts/signature-$abi.txt"
             java --class-path "$sdk_tools/lib/apksigner.jar" .github/scripts/VerifyApk.java "$apk" "$expected" > "$report"
+            badging="release-artifacts/package-$abi.txt"
+            "$sdk_tools/aapt2" dump badging "$apk" > "$badging"
+            grep -F "package: name='io.wboat.writer' versionCode='$version_code' " "$badging"
+            grep -Ex "native-code: '$abi'[[:space:]]*" "$badging"
             cp "$apk" "release-artifacts/Qingjian-Android-$abi.apk"
           done
           (cd release-artifacts && sha256sum Qingjian-Android-*.apk > SHA256SUMS)
@@ -171,3 +186,74 @@ jobs:
           name: Qingjian-Android-signed
           path: release-artifacts/
           if-no-files-found: error
+
+  signed-upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    needs: signed
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Qingjian-Android-signed
+          path: previous
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.upgrade_from_run }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Qingjian-Android-signed
+          path: candidate
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - name: Verify signing lineage and preserve an old manuscript across install
+        shell: bash
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.QINGJIAN_CERT_SHA256 }}
+        run: |
+          sdkmanager --channel=3 'platform-tools' 'build-tools;37.0.0' 'emulator' 'system-images;android-35;google_apis;x86_64'
+          sdk_tools="$ANDROID_HOME/build-tools/37.0.0"
+          expected="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          mkdir -p upgrade-evidence
+          apk=Qingjian-Android-x86_64.apk
+          for build in previous candidate; do
+            (cd "$build" && sha256sum -c SHA256SUMS)
+            java --class-path "$sdk_tools/lib/apksigner.jar" .github/scripts/VerifyApk.java "$build/$apk" "$expected" \
+              > "upgrade-evidence/$build-signature.txt"
+            "$sdk_tools/aapt2" dump badging "$build/$apk" > "upgrade-evidence/$build-package.txt"
+          done
+          package_version() {
+            sed -n "s/^package: name='io\.wboat\.writer' versionCode='\([0-9][0-9]*\)'.*/\1/p" "upgrade-evidence/$1-package.txt"
+          }
+          previous_version="$(package_version previous)"
+          candidate_version="$(package_version candidate)"
+          [[ -n "$previous_version" && -n "$candidate_version" ]]
+          (( candidate_version > previous_version ))
+
+          printf 'no\n' | avdmanager create avd -n qingjian-upgrade -k 'system-images;android-35;google_apis;x86_64'
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -avd qingjian-upgrade -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect > upgrade-evidence/emulator.log 2>&1 &
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = 1 ]; do sleep 2; done'
+          adb shell wm size 1080x2340
+          adb shell wm density 480
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+          python3 .github/scripts/verify-android-upgrade.py "previous/$apk" "candidate/$apk" upgrade-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Qingjian-Android-signed-upgrade
+          path: upgrade-evidence/

@@ -21,6 +21,29 @@ internal fun roleplay(book: JSONObject) = book.obj("roleplay").apply {
     array("sessions")
 }
 
+internal fun roleplayTranscriptRevision(messages: JSONArray): String = syncHash(sortedJson(messages))
+
+internal fun appendRoleplayResponse(transcript: JSONArray, expectedRevision: String?, rewriteId: String?, text: String) {
+    check(expectedRevision != null && roleplayTranscriptRevision(transcript) == expectedRevision) {
+        "会话内容已改变，请重新生成回复。"
+    }
+    if (rewriteId == null) transcript.put(roleplayMessage("assistant", text))
+    else {
+        val last = transcript.optJSONObject(transcript.length() - 1)
+        check(last?.string("id") == rewriteId) { "会话内容已改变，请重新生成回复。" }
+        reviseRoleplayReply(checkNotNull(last), text)
+    }
+}
+
+internal fun branchRoleplaySession(session: JSONObject, messageId: String, defaultTitle: String): JSONObject {
+    val messages = session.records("messages")
+    val index = messages.indexOfFirst { it.string("id") == messageId }
+    require(index >= 0) { "这条消息已删除，无法创建分支。" }
+    return JSONObject(session.toString()).put("id", newId())
+        .put("title", session.string("title", defaultTitle) + " · 分支")
+        .put("messages", JSONArray(messages.take(index + 1).map { JSONObject(it.toString()) }))
+}
+
 internal fun readRoleplayCard(bytes: ByteArray): JSONObject {
     val png = CharacterCardPng.isPng(bytes)
     val card = if (png) CharacterCardPng.read(bytes) else CharacterCardCodec.decodeBytes(bytes)
@@ -41,10 +64,19 @@ internal fun etaCard(card: JSONObject): CharacterCard = card.optJSONObject("card
     description = card.string("description"), scenario = card.string("scene"), firstMessage = card.string("greeting")
 )
 
+private const val emptyCardImage =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+
+internal fun roleplayAvatar(bytes: ByteArray): String {
+    CharacterCardPng.validate(bytes)
+    return Base64.getEncoder().encodeToString(bytes)
+}
+
 internal fun exportCard(card: JSONObject, png: Boolean): ByteArray {
     val source = etaCard(card)
     if (!png) return CharacterCardCodec.encodeJson(source).toByteArray(Charsets.UTF_8)
-    return CharacterCardPng.write(Base64.getDecoder().decode(card.getString("png")), source)
+    val image = Base64.getDecoder().decode(card.string("png").ifBlank { emptyCardImage })
+    return CharacterCardPng.write(image, source)
 }
 
 internal fun newRoleplaySession(card: JSONObject, greeting: String) = JSONObject()
@@ -100,16 +132,25 @@ internal fun roleplayPrompt(
 }
 
 // Port of the PC worldMatches keyword and budget rules for the book-level world.
-internal fun worldBookMatches(world: JSONObject?, query: String, outerBudget: Int): List<JSONObject> {
-    if (world == null) return emptyList()
-    val entries = world.records("entries").filter { it.optBoolean("enabled", true) && it.string("content").isNotBlank() }
+internal fun worldBookMatches(world: JSONObject?, query: String, outerBudget: Int): List<JSONObject> =
+    resolveBookWorld(world, query, outerBudget).chosen.map { it.entry }
+
+internal data class BookWorldHit(val entry: JSONObject, val round: Int, val included: Boolean)
+
+internal data class BookWorldResolution(val hits: List<BookWorldHit>, val used: Int, val budget: Int) {
+    val chosen get() = hits.filter { it.included }
+}
+
+internal fun resolveBookWorld(world: JSONObject?, query: String, outerBudget: Int): BookWorldResolution {
+    val entries = world?.records("entries").orEmpty()
+        .filter { it.optBoolean("enabled", true) && it.string("content").isNotBlank() }
         .sortedWith(compareByDescending<JSONObject> { it.optBoolean("always") }.thenByDescending { it.optInt("priority", 100) })
-    val limit = minOf(world.optInt("budget", 1800), (outerBudget * 0.35).toInt())
-    val chosen = mutableListOf<JSONObject>()
+    val limit = minOf(world?.optInt("budget", 1800)?.coerceIn(100, 16_000) ?: 1800, (outerBudget * 0.35).toInt())
+    val hits = mutableListOf<BookWorldHit>()
     val seen = mutableSetOf<String>()
     var text = Normalizer.normalize(query, Normalizer.Form.NFKC)
     var used = 0
-    for (round in 0..world.optInt("recursion", 0).coerceIn(0, 3)) {
+    for (round in 0..(world?.optInt("recursion") ?: 0).coerceIn(0, 3)) {
         val next = mutableListOf<String>()
         for (entry in entries) {
             val id = entry.string("id")
@@ -117,10 +158,10 @@ internal fun worldBookMatches(world: JSONObject?, query: String, outerBudget: In
             if (id in seen || !obvious && (round > 0 && entry.optBoolean("excludeRecursion") ||
                     round < entry.optInt("recursionDelay"))) continue
             val ignoreCase = !entry.optBoolean("caseSensitive")
-            fun hits(key: String) = text.contains(Normalizer.normalize(key, Normalizer.Form.NFKC), ignoreCase)
+            fun matches(key: String) = text.contains(Normalizer.normalize(key, Normalizer.Form.NFKC), ignoreCase)
             if (!obvious) {
-                if (!entry.strings("keys").any(::hits)) continue
-                val secondary = entry.strings("secondary").map(::hits)
+                if (!entry.strings("keys").any(::matches)) continue
+                val secondary = entry.strings("secondary").map(::matches)
                 if (secondary.isNotEmpty() && !when (entry.string("logic")) {
                     "all" -> secondary.all { it }
                     "not-any" -> secondary.none { it }
@@ -131,15 +172,16 @@ internal fun worldBookMatches(world: JSONObject?, query: String, outerBudget: In
             seen += id
             val body = entry.string("content")
             val size = JSONObject().put("标题", entry.string("title")).put("内容", body).toString().length + 1
-            if (size + used > limit) continue
+            val included = size + used <= limit
+            hits += BookWorldHit(entry, round, included)
+            if (!included) continue
             used += size
-            chosen += entry
             if (!entry.optBoolean("preventRecursion")) next += body
         }
-        if (next.isEmpty()) break
-        text += "\n" + Normalizer.normalize(next.joinToString("\n"), Normalizer.Form.NFKC)
+        if (round == 0 && next.isEmpty()) break
+        if (next.isNotEmpty()) text += "\n" + Normalizer.normalize(next.joinToString("\n"), Normalizer.Form.NFKC)
     }
-    return chosen
+    return BookWorldResolution(hits, used, limit)
 }
 
 internal fun JSONObject.strings(key: String): List<String> =

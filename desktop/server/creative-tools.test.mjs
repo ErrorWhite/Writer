@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { createServer } from 'node:http'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -19,6 +19,27 @@ import { runSkillScript, skillFeedback } from './skill-runtime.js'
 const anchor = { chapterId: 'one', paragraphId: 'paragraph-one' }
 const chapter = { id: 'one', title: '起雾', text: '安鹭走进码头。', paragraphs: [{ id: anchor.paragraphId, text: '安鹭走进码头。' }] }
 const oldBook = { id: 'book-test', title: '雾港', activeId: chapter.id, volumes: [{ id: 'v', title: '卷一', chapters: [chapter] }] }
+
+test('PC imports the exchange manuscript with its stable identifiers and attachments', async () => {
+  const exported = process.env.QINGJIAN_ANDROID_ROUNDTRIP
+  const path = exported || new URL('../../app/src/androidTest/assets/manuscript-exchange.json', import.meta.url)
+  const result = importManuscript(await readFile(path, 'utf8'), { preserveIdentity: true })
+  assert.equal(result.id, 'exchange-fixture')
+  assert.equal(result.activeId, 'chapter-two')
+  const [volume] = result.volumes
+  const [first, second] = volume.chapters
+  assert.equal(volume.id, 'volume-one')
+  assert.deepEqual([first.id, second.id], ['chapter-one', 'chapter-two'])
+  assert.equal(first.handoff.bridge, '带着信封去码头')
+  assert.equal(second.paragraphs[1].id, 'para-two-b')
+  assert.equal(second.paragraphs[1].drafts[0].id, 'draft-one')
+  assert.ok(second.text.includes(exported ? '安鹭在雾中拆开信封。' : '安鹭拆开信封。'))
+  assert.equal(result.research.annotations[0].anchor.paragraphId, 'para-one')
+  assert.equal(result.research.foreshadows[0].anchors[1].anchor.paragraphId, 'para-two-b')
+  assert.equal(result.creative.assets[0].data, '# 码头\n\n晨雾。')
+  assert.equal(result.creative.worldBook.entries[0].id, 'world-one')
+  assert.equal(result.roleplay.sessions[0].messages[0].id, 'message-one')
+})
 
 test('Markdown 改稿保留清单状态、表格列、强调位置和场景分隔', () => {
   assert(!preservesMarkup('- [x] 值守', '- [ ] 巡逻'))

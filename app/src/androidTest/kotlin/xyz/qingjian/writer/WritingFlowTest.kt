@@ -3,6 +3,8 @@ package xyz.qingjian.writer
 import android.content.Context
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.webkit.WebView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -14,15 +16,188 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 
 @RunWith(AndroidJUnit4::class)
 class WritingFlowTest {
+    @Test
+    fun wideWriterShowsTheDirectoryAndTheCurrentChapterTogether() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.create("平板写作验收")
+        val bookId = book.string("id")
+        val volume = book.records("volumes").single()
+        val chapter = volume.records("chapters").single().put("title", "打开中的章节").put("text", "平板正文。")
+        volume.getJSONArray("chapters").put(Manuscript.newChapter("目录里的下一章").put("text", "切章后的正文。"))
+        runBlocking { library.store(book, null) }
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
+        val previousSize = device.executeShellCommand("wm size").lineSequence()
+            .firstOrNull { it.startsWith("Override size:") }?.substringAfter(':')?.trim() ?: "reset"
+        val previousDensity = device.executeShellCommand("wm density").lineSequence()
+            .firstOrNull { it.startsWith("Override density:") }?.substringAfter(':')?.trim() ?: "reset"
+
+        try {
+            device.executeShellCommand("wm size 1200x1920")
+            device.executeShellCommand("wm density 200")
+            ActivityScenario.launch(MainActivity::class.java).use {
+                val otherChapter = requireNotNull(device.wait(Until.findObject(By.text("目录里的下一章")), 15_000))
+                val body = requireNotNull(device.wait(Until.findObject(By.text(chapter.string("text"))), 10_000))
+                check(otherChapter.visibleBounds.centerX() < body.visibleBounds.centerX()) { "目录未与正文并排显示" }
+                otherChapter.click()
+                requireNotNull(device.wait(Until.findObject(By.text("切章后的正文。")), 10_000))
+                requireNotNull(device.wait(Until.findObject(By.text("打开中的章节")), 10_000))
+                screenshot(device, "chapter-tablet")
+            }
+        } finally {
+            device.executeShellCommand("wm size $previousSize")
+            device.executeShellCommand("wm density $previousDensity")
+        }
+    }
+
+    @Test
+    fun nativeEditorWritesCommittedChineseInsteadOfImeComposition() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.create("输入法验收")
+        val bookId = book.string("id")
+        val chapterId = book.string("activeId")
+        runBlocking { library.store(book, null) }
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            requireNotNull(device.wait(Until.findObject(By.text("源码")), 15_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.desc("章节正文")), 10_000))
+            var connection: InputConnection? = null
+            scenario.onActivity { activity ->
+                val host = requireNotNull(findTextEditor(activity.window.decorView)) { "未找到原生输入会话" }
+                connection = requireNotNull(host.onCreateInputConnection(EditorInfo()))
+                check(connection?.setComposingText("qing", 1) == true)
+            }
+            requireNotNull(device.wait(Until.findObject(By.text("qing")), 10_000))
+            assertEquals("", runBlocking { library.chapterText(bookId, chapterId) })
+            scenario.onActivity { check(connection?.commitText("青", 1) == true) }
+            runBlocking {
+                withTimeout(10_000) {
+                    while (library.chapterText(bookId, chapterId) != "青") delay(100)
+                }
+            }
+            requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
+        }
+    }
+
+    @Test
+    fun androidExportsAnEditedPcManuscriptWithItsOriginalAnchorsAndAttachments() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val library = Library(instrumentation.targetContext)
+        val source = instrumentation.context.assets.open("manuscript-exchange.json").bufferedReader().use { it.readText() }
+        val original = Manuscript.read(source)
+        val bookId = library.store(original, null)
+        val originalChapter = original.records("volumes").single().records("chapters")[1]
+        val revised = originalChapter.string("text").replace("安鹭拆开信封。", "安鹭在雾中拆开信封。")
+        val wordsBefore = library.directory(bookId).first().single { it.id == "chapter-two" }.wordCount
+        library.stageEdit(bookId, "chapter-two", revised)
+        library.commitEdit(bookId, "chapter-two")
+        assertEquals(wordsBefore + 3, library.directory(bookId).first().single { it.id == "chapter-two" }.wordCount)
+        val current = library.export(bookId)
+
+        fun export(format: ExportFormat) = ByteArrayOutputStream().apply {
+            format.write(current, "chapter-two", this)
+        }.toByteArray()
+
+        val json = export(ExportFormat.Json).toString(Charsets.UTF_8)
+        val exchange = Manuscript.read(json)
+        assertEquals(original.string("id"), exchange.string("id"))
+        assertEquals(original.string("activeId"), exchange.string("activeId"))
+        for (group in listOf("research", "creative", "roleplay")) {
+            assertEquals(sortedJson(original.getJSONObject(group)), sortedJson(exchange.getJSONObject(group)))
+        }
+        val chapters = exchange.records("volumes").single().records("chapters")
+        assertEquals("volume-one", exchange.records("volumes").single().string("id"))
+        assertEquals(listOf("chapter-one", "chapter-two"), chapters.map { it.string("id") })
+        val revisedParagraph = chapters[1].records("paragraphs").last()
+        assertEquals("para-two-b", revisedParagraph.string("id"))
+        assertEquals("draft-one", revisedParagraph.records("drafts").single().string("id"))
+        assertEquals(revised, chapters[1].string("text"))
+        check(export(ExportFormat.Markdown).toString(Charsets.UTF_8).contains("\n---\n"))
+        check(export(ExportFormat.Text).toString(Charsets.UTF_8).contains("安鹭捡起信封。"))
+        assertEquals("\uFEFF第二章\n\n$revised", export(ExportFormat.Chapter).toString(Charsets.UTF_8))
+        ZipInputStream(export(ExportFormat.Epub).inputStream()).use { zip ->
+            val mime = zip.nextEntry
+            assertEquals("mimetype", mime.name)
+            assertEquals(ZipEntry.STORED, mime.method)
+            assertEquals("application/epub+zip", zip.readBytes().toString(Charsets.US_ASCII))
+            val files = buildMap {
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    put(entry.name, zip.readBytes().toString(Charsets.UTF_8))
+                }
+            }
+            check(files.getValue("EPUB/toc.xhtml").contains("第二章"))
+            val chapter = files.getValue("EPUB/chapter-2.xhtml")
+            check(chapter.contains("<blockquote>") && chapter.contains("安鹭在雾中拆开信封。"))
+        }
+        library.replaceFromBackup(bookId, original)
+        assertEquals(originalChapter.string("text"), library.chapterText(bookId, "chapter-two"))
+        assertEquals(wordsBefore, library.directory(bookId).first().single { it.id == "chapter-two" }.wordCount)
+        val restorePoint = library.bookVersions(bookId).first().first()
+        val savedBeforeOverwrite = library.readBookVersion(bookId, restorePoint.id)
+        assertEquals(revised, savedBeforeOverwrite.records("volumes").single().records("chapters")[1].string("text"))
+        instrumentation.targetContext.filesDir.resolve("android-pc-manuscript.json").writeText(json, Charsets.UTF_8)
+    }
+
+    @Test
+    fun nativeResearchCardOpensTheAnchoredChapterAndBackReturnsToResearch() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.create("资料导航验收")
+        val bookId = book.string("id")
+        val target = Manuscript.newChapter("原文所在章")
+        editChapter(target, "这段是资料卡所指的原文。")
+        book.records("volumes").single().getJSONArray("chapters").put(target)
+        val anchor = JSONObject().put("chapterId", target.string("id"))
+            .put("paragraphId", target.records("paragraphs").single().string("id"))
+        book.obj("research").array("annotations").put(JSONObject().put("id", "qa-research-anchor")
+            .put("title", "跳转批注").put("text", "用于检查原文回链。").put("anchor", anchor))
+        runBlocking { library.store(book, null) }
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            val desk = requireNotNull(device.wait(Until.findObject(By.text("工作台")), 15_000))
+            check(desk.visibleBounds.centerY() > device.displayHeight / 2) { "手机工作台入口未放在底部" }
+            desk.click()
+            requireNotNull(device.wait(Until.findObject(By.text("资料")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("查看原文")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("原文所在章")), 10_000))
+            requireNotNull(device.wait(Until.findObject(By.text("这段是资料卡所指的原文。")), 10_000))
+            device.pressBack()
+            requireNotNull(device.wait(Until.findObject(By.text("跳转批注")), 10_000))
+            requireNotNull(device.wait(Until.findObject(By.text("审阅")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("AI 整理资料")), 10_000))
+            requireNotNull(device.wait(Until.findObject(By.text("审阅与比稿")), 10_000))
+            requireNotNull(device.wait(Until.findObject(By.text("章节版本")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("章节还原点")), 10_000))
+            device.pressBack()
+            requireNotNull(device.wait(Until.findObject(By.text("AI 使用量")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("尚无模型用量记录")), 10_000))
+        }
+    }
+
     @Test
     fun providersHaveASeparateDetailPageAndModelTab() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -52,6 +227,104 @@ class WritingFlowTest {
     }
 
     @Test
+    fun writeOfflineInTheNativeEditorAndResumeTheNextChapter() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.create("原生续写验收")
+        val bookId = book.string("id")
+        val volume = book.records("volumes").first()
+        val first = volume.records("chapters").first().put("title", "原生验收首章").put("text", "第一段。")
+        val next = Manuscript.newChapter("原生验收次章").put("text", "次日清晨。")
+        volume.getJSONArray("chapters").put(next)
+        runBlocking { library.store(book, null) }
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().clear().commit()
+
+        device.executeShellCommand("svc wifi disable")
+        device.executeShellCommand("svc data disable")
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                requireNotNull(device.wait(Until.findObject(By.text("原生续写验收")), 15_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("源码")), 10_000)).click()
+                val field = requireNotNull(device.wait(Until.findObject(By.desc("章节正文")), 10_000))
+                val text = buildString {
+                    append("她穿过薄雾。\n\n## 次日\n\n")
+                    repeat(400) { index -> append("第 ${index + 1} 段。渡船靠岸，远处的石堤浮在潮水上。\n\n") }
+                    append("最后一段。")
+                }
+                field.text = text
+                runBlocking {
+                    withTimeout(10_000) {
+                        while (chapterText(library, bookId) != text) delay(100)
+                    }
+                }
+                requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
+                scenario.onActivity { check(findWebView(it.window.decorView) == null) }
+                screenshot(device, "chapter")
+                requireNotNull(device.wait(Until.findObject(By.text("目录")), 10_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("原生验收次章")), 10_000)).click()
+                requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 10_000))
+            }
+            ActivityScenario.launch(MainActivity::class.java).use {
+                requireNotNull(device.wait(Until.findObject(By.text("次日清晨。")), 15_000))
+                val saved = runBlocking { library.export(bookId) }
+                assertEquals(next.string("id"), saved.string("activeId"))
+                assertEquals(first.string("id"), saved.records("volumes").first().records("chapters").first().string("id"))
+            }
+        } finally {
+            device.executeShellCommand("svc wifi enable")
+            device.executeShellCommand("svc data enable")
+        }
+    }
+
+    @Test
+    fun openingNativeBookRecoversItsJournalAndKeepsLegacyChapterIdentity() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.read("""
+            {
+              "id": "qa-room-journal", "title": "旧稿恢复验收", "volume": "旧卷",
+              "chapters": [{
+                "id": "chapter-old", "title": "旧章", "text": "原稿。",
+                "paragraphs": [{ "id": "paragraph-old", "text": "原稿。" }]
+              }],
+              "research": {
+                "annotations": [{
+                  "id": "note-old", "text": "保留这条批注",
+                  "anchor": { "chapterId": "chapter-old", "paragraphId": "paragraph-old" }
+                }]
+              }
+            }
+        """.trimIndent())
+        val bookId = book.string("id")
+        val chapterId = book.string("activeId")
+        val text = "恢复草稿。"
+        runBlocking {
+            library.store(book, null)
+            library.stageEdit(bookId, chapterId, text)
+            assertEquals("原稿。", library.chapterText(bookId, chapterId))
+        }
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
+
+        ActivityScenario.launch(MainActivity::class.java).use {
+            requireNotNull(device.wait(Until.findObject(By.text(text)), 15_000))
+            val saved = runBlocking { library.export(bookId) }
+            val volume = saved.records("volumes").single()
+            val chapter = volume.records("chapters").single()
+            assertEquals("旧卷", volume.string("title"))
+            assertEquals(chapterId, chapter.string("id"))
+            assertEquals("paragraph-old", chapter.records("paragraphs").single().string("id"))
+            assertEquals("paragraph-old", saved.getJSONObject("research").records("annotations").single()
+                .getJSONObject("anchor").string("paragraphId"))
+            assertEquals(text, chapter.string("text"))
+        }
+    }
+
+    @Test
     fun writeOfflineInTheSharedWorkspaceAndResumeTheBook() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -74,6 +347,7 @@ class WritingFlowTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 requireNotNull(device.wait(Until.findObject(By.text("云端写作验收")), 15_000)).click()
+                openLegacyWorkbench(device)
                 waitForScript(scenario, "$chapterEditor?.value === ${JSONObject.quote(original)}")
                 checkEditorVisible(scenario)
                 evaluate(scenario, """
@@ -88,7 +362,7 @@ class WritingFlowTest {
                     assertEquals(rewritten, chapterText(library, bookId))
                 }
                 device.waitForIdle()
-                screenshot(device, "chapter")
+                screenshot(device, "chapter-legacy")
                 evaluate(scenario, "document.querySelector('.mobile-writing-nav button:nth-child(2)').click()")
                 waitForScript(scenario, "document.querySelector('.navigation')?.classList.contains('mobile-open')")
                 evaluate(scenario, "Array.from(document.querySelectorAll('.chapter-button')).find(button => button.title.includes('第二章')).click()")
@@ -98,6 +372,7 @@ class WritingFlowTest {
             }
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 assertEquals(bookId, context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).getString("book", null))
+                openLegacyWorkbench(device)
                 waitForScript(scenario, "$chapterEditor?.value === '次日清晨。'")
                 val persisted = runBlocking { library.export(bookId) }
                 assertEquals(next.string("id"), persisted.string("activeId"))
@@ -120,6 +395,7 @@ class WritingFlowTest {
         runBlocking { library.store(book, null) }
         context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            openLegacyWorkbench(device)
             waitForScript(scenario, "$chapterEditor?.value === ''")
             runBlocking { library.updateBookText(bookId, "outline", "其他客户端的大纲。") }
             replaceBody(scenario, "手机离线草稿。")
@@ -134,26 +410,110 @@ class WritingFlowTest {
         }
     }
 
+    @Test
+    fun legacyJournalRecoveryReturnsToTheNativeEditorAndClearsTheJournal() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val device = UiDevice.getInstance(instrumentation)
+        val library = Library(context)
+        val book = Manuscript.create("本机恢复验收")
+        val bookId = book.string("id")
+        val baseline = runBlocking {
+            library.store(book, null)
+            library.export(bookId)
+        }
+        val revision = runBlocking { workbenchRevision(baseline) }
+        val text = "这是尚未写入书库的离线草稿。"
+        val snapshot = JSONObject(baseline.toString())
+        editChapter(snapshot.records("volumes").first().records("chapters").first(), text)
+        val entry = JSONObject().put("id", bookId).put("version", "qa-uncommitted-journal")
+            .put("revision", revision).put("snapshot", snapshot.toString())
+        context.getSharedPreferences("writing_positions", Context.MODE_PRIVATE).edit().putString("book", bookId).commit()
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            openLegacyWorkbench(device)
+            waitForScript(scenario, "$chapterEditor?.value === ''")
+            evaluate(scenario, """
+                (() => {
+                  const request = indexedDB.open('qingjian-autosave', 2);
+                  request.onsuccess = () => {
+                    const db = request.result;
+                    const write = db.transaction('pending', 'readwrite');
+                    write.objectStore('pending').put($entry, ${JSONObject.quote(bookId)});
+                    write.oncomplete = () => {
+                      db.close();
+                      document.body.dataset.journalReady = 'true';
+                    };
+                  };
+                })()
+            """.trimIndent())
+            waitForScript(scenario, "document.body.dataset.journalReady === 'true'")
+            assertEquals("", runBlocking { chapterText(library, bookId) })
+        }
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            requireNotNull(device.wait(Until.findObject(By.desc("作品管理")), 15_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text("恢复旧工作区草稿")), 10_000)).click()
+            requireNotNull(device.wait(Until.findObject(By.text(text)), 15_000))
+            assertEquals(text, runBlocking { chapterText(library, bookId) })
+            scenario.onActivity { check(findWebView(it.window.decorView) == null) }
+            openLegacyWorkbench(device)
+            waitForScript(scenario, "$chapterEditor?.value === ${JSONObject.quote(text)}")
+            evaluate(scenario, """
+                (() => {
+                  const request = indexedDB.open('qingjian-autosave', 2);
+                  request.onsuccess = () => {
+                    const db = request.result;
+                    const entry = db.transaction('pending').objectStore('pending').get(${JSONObject.quote(bookId)});
+                    entry.onsuccess = () => {
+                      document.body.dataset.journalCleared = String(entry.result === undefined);
+                      db.close();
+                    };
+                  };
+                })()
+            """.trimIndent())
+            waitForScript(scenario, "document.body.dataset.journalCleared === 'true'")
+        }
+    }
+
     private val chapterEditor = "document.querySelector('textarea[aria-label=\"章节正文\"]')"
+
+    private fun openLegacyWorkbench(device: UiDevice) {
+        requireNotNull(device.wait(Until.findObject(By.desc("作品管理")), 15_000)).click()
+        requireNotNull(device.wait(Until.findObject(By.text("旧工作区回归")), 10_000)).click()
+    }
 
     private suspend fun chapterText(library: Library, bookId: String) =
         library.export(bookId).records("volumes").first().records("chapters").first().string("text")
 
     private fun checkEditorVisible(scenario: ActivityScenario<MainActivity>) {
-        val visible = evaluate(scenario, """
+        val hitTest = """
             (() => {
               const field = $chapterEditor;
-              const rect = field?.getBoundingClientRect();
-              if (!rect || rect.width < 160 || rect.height < 22 || rect.top < 0 ||
+              if (!field) return false;
+              const rect = field.getBoundingClientRect();
+              if (rect.width < 160 || rect.height < 22 || rect.top < 0 ||
                   rect.top + 20 >= innerHeight || rect.left < 0 || rect.right > innerWidth) return false;
               return document.elementFromPoint(rect.left + 12, rect.top + 12) === field;
             })()
-        """.trimIndent())
-        val geometry = if (visible != "true") evaluate(scenario, """
-            JSON.stringify(Object.fromEntries(['.studio', '.workspace', '.writing', '.editor-toolbar', '.paper', '.manuscript-editor']
-              .map(selector => [selector, document.querySelector(selector)?.getBoundingClientRect()])))
-        """.trimIndent()) else ""
-        check(visible == "true") { "正文编辑区不在可操作的屏幕范围内：$geometry" }
+        """.trimIndent()
+        val visible = runBlocking {
+            withTimeoutOrNull(5_000) {
+                while (evaluate(scenario, hitTest) != "true") delay(100)
+                true
+            } ?: false
+        }
+        check(visible) {
+            val geometry = evaluate(scenario, """
+                (() => {
+                  const field = $chapterEditor;
+                  const rect = field?.getBoundingClientRect();
+                  const hit = rect && document.elementFromPoint(rect.left + 12, rect.top + 12);
+                  return JSON.stringify({ rect, hit: hit?.outerHTML.slice(0, 180), viewport: [innerWidth, innerHeight] });
+                })()
+            """.trimIndent())
+            "正文编辑区不在可操作的屏幕范围内：$geometry"
+        }
     }
 
     private fun replaceBody(scenario: ActivityScenario<MainActivity>, text: String) {
@@ -190,6 +550,14 @@ class WritingFlowTest {
         if (view is WebView) return view
         if (view is ViewGroup) {
             for (index in 0 until view.childCount) findWebView(view.getChildAt(index))?.let { return it }
+        }
+        return null
+    }
+
+    private fun findTextEditor(view: View): View? {
+        if (view.onCheckIsTextEditor()) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) findTextEditor(view.getChildAt(index))?.let { return it }
         }
         return null
     }

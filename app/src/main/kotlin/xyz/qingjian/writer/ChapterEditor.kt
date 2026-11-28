@@ -1,6 +1,7 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -23,13 +24,11 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
-import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.IconButton
-import io.github.suqi8.coui.kmp.basic.FloatingToolbar
-import io.github.suqi8.coui.kmp.basic.LinearProgressIndicator
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
-import io.github.suqi8.coui.kmp.basic.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -46,6 +45,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
@@ -64,24 +65,27 @@ import org.json.JSONObject
 @Composable
 internal fun ChapterEditor(
     model: WriterModel, book: BookRow, modifier: Modifier, focus: Boolean = false,
-    planning: Boolean = false, planningStarted: () -> Unit = {}, toggleFocus: () -> Unit = {}
+    planning: Boolean = false, planningStarted: () -> Unit = {},
+    requestedPosition: WritingPosition? = null, toggleFocus: () -> Unit = {}
 ) {
     val chapter by remember(book.id, book.activeId) { model.library.chapter(book.id, book.activeId) }
         .collectAsStateWithLifecycle(initialValue = null)
     val row = chapter?.takeIf { it.id == book.activeId } ?: return
-    key(row.id) { ChapterBody(model, book, row, modifier, focus, planning, planningStarted, toggleFocus) }
+    key(row.id, requestedPosition) {
+        ChapterBody(model, book, row, modifier, focus, planning, planningStarted, requestedPosition, toggleFocus)
+    }
 }
 
 @Composable
 private fun ChapterBody(
     model: WriterModel, book: BookRow, chapter: ChapterRow, modifier: Modifier, focus: Boolean,
-    planning: Boolean, planningStarted: () -> Unit, toggleFocus: () -> Unit
+    planning: Boolean, planningStarted: () -> Unit, requestedPosition: WritingPosition?, toggleFocus: () -> Unit
 ) {
     val draftKey = remember(chapter.bookId, chapter.id) { DraftKey(chapter.bookId, chapter.id) }
     val drafts by model.drafts.collectAsStateWithLifecycle()
     val draft = drafts[draftKey]
     val text = draft?.text ?: chapter.text
-    val position = remember { model.writingPosition(draftKey) }
+    val position = remember { requestedPosition ?: model.writingPosition(draftKey) }
     var editor by remember {
         mutableStateOf(TextFieldValue(text, TextRange(
             position.selectionStart.coerceIn(0, text.length), position.selectionEnd.coerceIn(0, text.length)
@@ -89,6 +93,8 @@ private fun ChapterBody(
     }
     var sourceMode by rememberSaveable { mutableStateOf(false) }
     var active by remember { mutableStateOf<ActiveBlock?>(null) }
+    var compositionBase by remember { mutableStateOf<TextFieldValue?>(null) }
+    DisposableEffect(draftKey) { onDispose { model.setComposing(draftKey, false) } }
     val keyboard = LocalSoftwareKeyboardController.current
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var wasTyping by remember { mutableStateOf(false) }
@@ -100,14 +106,17 @@ private fun ChapterBody(
     val (parsedText, blocks) = projection
     LaunchedEffect(viewport) {
         snapshotFlow {
-            WritingPosition(editor.selection.start, editor.selection.end,
+            val selection = compositionBase?.selection ?: editor.selection
+            WritingPosition(selection.start, selection.end,
                 viewport.firstVisibleItemIndex, viewport.firstVisibleItemScrollOffset)
         }.collect { model.saveWritingPosition(draftKey, it) }
     }
     fun finishEditing() {
         active = null
         sourceMode = false
-        editor = editor.copy(composition = null)
+        editor = compositionBase ?: editor.copy(composition = null)
+        compositionBase = null
+        model.setComposing(draftKey, false)
         keyboard?.hide()
     }
     LaunchedEffect(keyboardVisible) {
@@ -115,6 +124,11 @@ private fun ChapterBody(
         else if (wasTyping) {
             wasTyping = false
             if (active != null) finishEditing()
+            else if (compositionBase != null) {
+                editor = checkNotNull(compositionBase)
+                compositionBase = null
+                model.setComposing(draftKey, false)
+            }
         }
     }
     val undo = remember { ArrayDeque<TextFieldValue>() }
@@ -150,7 +164,10 @@ private fun ChapterBody(
         }
     }
     val bodySize = settings.optInt("fontSize", 17).coerceIn(13, 32).sp
-    val goal = chapterSettings.optInt("goal").takeIf { it > 0 } ?: settings.optInt("goal")
+    val bodySpacing = settings.optDouble("bodyLineSpacing", 1.75)
+        .takeIf(Double::isFinite)?.coerceIn(1.3, 2.5)?.toFloat() ?: 1.75f
+    val bodyFont = if (settings.string("bodyFont") == "sans") FontFamily.SansSerif else FontFamily.Serif
+    val goal = chapterSettings.optInt("goal").takeIf { it > 0 } ?: bookChapterGoal(settings)
     val light = WriterTheme.colorScheme.surface.luminance() > 0.5f
     val paper = when (settings.string("paper")) {
         "warm", "cream" -> if (light) Color(0xFFFAF5E9) else Color(0xFF282525)
@@ -158,11 +175,19 @@ private fun ChapterBody(
         else -> WriterTheme.colorScheme.surface
     }
     fun change(next: TextFieldValue, checkpoint: Boolean = false) {
-        if (next.text != editor.text) {
+        if (next.composition != null) {
+            if (compositionBase == null) {
+                compositionBase = editor.copy(composition = null)
+                model.setComposing(draftKey, true)
+            }
+            editor = next
+            return
+        }
+        val before = compositionBase ?: editor
+        if (before.text != next.text) {
             val now = android.os.SystemClock.elapsedRealtime()
-            if (checkpoint || lastRecorded == 0L || now - lastRecorded > 650) {
-                if (undo.size == 80) undo.removeFirst()
-                undo.addLast(editor.copy(composition = null))
+            if (checkpoint || compositionBase != null || lastRecorded == 0L || now - lastRecorded > 650) {
+                    undo.rememberEdit(before)
             }
             lastRecorded = now
             redo.clear()
@@ -171,6 +196,10 @@ private fun ChapterBody(
             model.edit(draftKey, next.text)
         }
         editor = next
+        if (compositionBase != null) {
+            compositionBase = null
+            model.setComposing(draftKey, false)
+        }
     }
     fun updateInside(next: TextFieldValue) {
         val binding = active ?: return
@@ -185,7 +214,7 @@ private fun ChapterBody(
     var history by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     LaunchedEffect(text) {
-        if (editor.text != text) {
+        if (compositionBase == null && editor.text != text) {
             active = null
             editor = TextFieldValue(text, TextRange(editor.selection.end.coerceAtMost(text.length)))
         }
@@ -237,7 +266,7 @@ private fun ChapterBody(
                     if (sourceMode || active != null) finishEditing() else sourceMode = true
                 })
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "章节操作") }
+                    IconButton(onClick = { menu = true }, enabled = compositionBase == null) { Icon(Icons.Default.MoreVert, "章节操作") }
                     DropdownMenu(menu, { menu = false }) {
                         DropdownMenuItem("编辑章节信息", onClick = { details = true; menu = false })
                         DropdownMenuItem("章节还原点", onClick = { history = true; menu = false })
@@ -281,7 +310,8 @@ private fun ChapterBody(
                         SaveState.Failed -> ToolbarTextButton(text = "重试保存", onClick = { model.retry(draftKey) })
                         SaveState.Saving -> Text("保存中", style = WriterTheme.typography.bodySmall,
                             color = WriterTheme.colorScheme.onSurfaceVariant)
-                        else -> Unit
+                        else -> Text("已保存", style = WriterTheme.typography.bodySmall,
+                            color = WriterTheme.colorScheme.onSurfaceVariant)
                     }
                   }
                   if (goal > 0 && !focus) LinearProgressIndicator(Modifier.fillMaxWidth(),
@@ -290,7 +320,7 @@ private fun ChapterBody(
             }
             val bodyStyle = WriterTheme.typography.bodyLarge.copy(
                 color = WriterTheme.colorScheme.onSurface, fontSize = bodySize,
-                lineHeight = bodySize * 1.75f, fontFamily = FontFamily.Serif
+                lineHeight = bodySize * bodySpacing, fontFamily = bodyFont
             )
             Surface(Modifier.weight(1f).fillMaxWidth(), color = paper) {
                 when {
@@ -325,7 +355,10 @@ private fun ChapterBody(
                                 WritingField(local, ::updateInside, bodyStyle, Modifier.fillMaxWidth())
                             } else {
                                 Column(Modifier.fillMaxWidth()) {
-                                    Box(Modifier.fillMaxWidth().clickable(enabled = parsedText == renderSource) {
+                                    val highlighted = requestedPosition?.block == index && editor.selection.start == position.selectionStart
+                                    val blockColor = if (highlighted) WriterTheme.colorScheme.primaryContainer else Color.Transparent
+                                    Box(Modifier.fillMaxWidth().background(blockColor, WriterTheme.shapes.small)
+                                        .clickable(enabled = parsedText == renderSource) {
                                         if (active != null) {
                                             finishEditing()
                                             return@clickable
@@ -361,18 +394,17 @@ private fun ChapterBody(
                     }
                 }
             }
-            if (editing && !paragraphMode) {
+            if (editing && !paragraphMode && compositionBase == null) {
                 if (formatting) FormatBar(editor, ::applyToolbarEdit)
-                FloatingToolbar(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    color = WriterTheme.colorScheme.surfaceContainer, materialEffect = false,
-                    outSidePadding = PaddingValues(horizontal = 4.dp)) {
+                Surface(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    color = WriterTheme.colorScheme.surfaceContainer, shape = WriterTheme.shapes.large) {
                   Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
                     TextButton(enabled = undoSize > 0, onClick = {
-                        redo.addLast(editor.copy(composition = null))
+                        redo.rememberEdit(editor)
                         replaceFromHistory(undo.removeLast())
                     }) { Text("撤销") }
                     TextButton(enabled = redoSize > 0, onClick = {
-                        undo.addLast(editor.copy(composition = null))
+                        undo.rememberEdit(editor)
                         replaceFromHistory(redo.removeLast())
                     }) { Text("重做") }
                     TextButton(onClick = { insertPair("「", "」") }) { Text("「」") }
@@ -401,7 +433,7 @@ private fun ChapterBody(
       }
     }
     if (details) ChapterDetails(model, chapter) { details = false }
-    if (history) HistoryDialog(model, chapter) { history = false }
+    if (history) ChapterHistoryDialog(model, chapter) { history = false }
     if (find) FindDialog(editor, { sourceMode = true; active = null; change(it, true) }) { find = false }
     if (ai) WritingAiDialog(model, book, chapter, aiRange ?: editor.selection, pickedParagraphs, initialIntent) {
         ai = false
@@ -513,10 +545,11 @@ private fun ChapterDetails(model: WriterModel, chapter: ChapterRow, dismiss: () 
 }
 
 @Composable
-private fun HistoryDialog(model: WriterModel, chapter: ChapterRow, dismiss: () -> Unit) {
+internal fun ChapterHistoryDialog(model: WriterModel, chapter: ChapterRow, dismiss: () -> Unit) {
     val versions by remember(chapter.bookId, chapter.id) { model.library.versions(chapter.bookId, chapter.id) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     var selected by rememberSaveable { mutableStateOf<Long?>(null) }
+    var comparison by remember { mutableStateOf<Pair<String, String>?>(null) }
     val restore = versions.firstOrNull { it.id == selected }
     AlertDialog(
         onDismissRequest = dismiss,
@@ -526,6 +559,11 @@ private fun HistoryDialog(model: WriterModel, chapter: ChapterRow, dismiss: () -
                 restore != null -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("当前正文会先保存为一个新还原点。")
                     Text(restore.text.take(220).ifBlank { "空白章节" }, maxLines = 6)
+                    TextButton(onClick = {
+                        model.perform {
+                            comparison = chapterText(chapter.bookId, chapter.id) to restore.text
+                        }
+                    }) { Text("与当前正文比较") }
                 }
                 versions.isEmpty() -> Text("可以保存当前正文，之后从这里恢复。")
                 else -> LazyColumn {
@@ -545,10 +583,20 @@ private fun HistoryDialog(model: WriterModel, chapter: ChapterRow, dismiss: () -
         },
         dismissButton = { TextButton(onClick = { if (restore == null) dismiss() else selected = null }) { Text("取消") } }
     )
+    comparison?.let { (current, saved) ->
+        ReviewDiff(current, saved, "比较章节还原点", "当前正文", "保存版本", onlyChanges = true) {
+            comparison = null
+        }
+    }
 }
 
-private val words = Regex("[\\p{IsHan}]|[\\p{L}\\p{N}&&[^\\p{IsHan}]]+")
-private fun manuscriptWordCount(text: String) = words.findAll(text).count()
+private fun ArrayDeque<TextFieldValue>.rememberEdit(value: TextFieldValue) {
+    var characters = sumOf { it.text.length.toLong() } + value.text.length
+    while (isNotEmpty() && (size >= 80 || characters > 4_000_000L)) {
+        characters -= removeFirst().text.length
+    }
+    addLast(value.copy(composition = null))
+}
 
 private data class ActiveBlock(val index: Int, val start: Int, val end: Int, val source: String)
 
@@ -561,7 +609,7 @@ private fun WritingField(
     val keyboard = LocalSoftwareKeyboardController.current
     BasicTextField(
         value = value, onValueChange = change,
-        modifier = modifier.focusRequester(requester),
+        modifier = modifier.focusRequester(requester).semantics { contentDescription = "章节正文" },
         textStyle = style,
         cursorBrush = SolidColor(WriterTheme.colorScheme.primary),
         decorationBox = { inner ->

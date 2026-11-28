@@ -1,6 +1,7 @@
 package xyz.qingjian.writer
 
 import android.net.Uri
+import android.content.pm.ApplicationInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,15 +18,16 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.IconButton
-import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.SnackbarHost
-import io.github.suqi8.coui.kmp.basic.SnackbarHostState
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.layout.DialogButtonBarAction
-import io.github.suqi8.coui.kmp.overlay.OverlayInputDialog
-import io.github.suqi8.coui.kmp.basic.SmallTopAppBar
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import com.itos.coui.layout.Scaffold
+import com.itos.coui.topappbar.TopAppBar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import com.itos.coui.dialog.CouiDialogAction
+import com.itos.coui.dialog.CouiDialogActionStyle
+import com.itos.coui.dialog.InputDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -37,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,13 +69,14 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            QingjianTheme(dark) { WriterApp(model, mode, dark) }
+            val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+            QingjianTheme(dark) { WriterApp(model, mode, dark, debuggable) }
         }
     }
 }
 
 @Composable
-private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean) {
+private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean, debuggable: Boolean) {
     val nav = rememberNavController()
     val notice by model.notice.collectAsStateWithLifecycle()
     val preview by model.importPreview.collectAsStateWithLifecycle()
@@ -86,7 +90,7 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean) {
     }
     var resumed by rememberSaveable { mutableStateOf(false) }
 
-    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0)) {
+    Scaffold(windowInsets = WindowInsets(0, 0, 0, 0)) {
       Box(Modifier.fillMaxSize()) {
         NavHost(nav, startDestination = "shelf") {
             composable("shelf") {
@@ -107,6 +111,19 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean) {
                 }
             }
             composable("book/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
+                val id = requireNotNull(it.arguments?.getString("id"))
+                BookScreen(model, id, legacyRecovery = {
+                    nav.navigate("legacy-recovery/${Uri.encode(id)}") { launchSingleTop = true }
+                }, legacyPreview = if (debuggable) {
+                    { nav.navigate("legacy-workbench/${Uri.encode(id)}") { launchSingleTop = true } }
+                } else null) { nav.popBackStack() }
+            }
+            composable("legacy-recovery/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
+                val id = requireNotNull(it.arguments?.getString("id"))
+                SharedWorkbench(model, id, dark, recoveryOnly = true) { nav.popBackStack() }
+            }
+            composable("legacy-workbench/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
+                if (!debuggable) return@composable
                 val id = requireNotNull(it.arguments?.getString("id"))
                 SharedWorkbench(model, id, dark) { page ->
                     when (page) {
@@ -172,9 +189,8 @@ private fun WriterApp(model: WriterModel, mode: ThemeMode, dark: Boolean) {
 
 @Composable
 internal fun BackBar(title: String, back: () -> Unit, actions: @Composable () -> Unit = {}) {
-    SmallTopAppBar(
-        title = title,
-        showDivider = false,
+    TopAppBar(
+        title = { Text(title, maxLines = 1, style = WriterTheme.typography.titleLarge) },
         navigationIcon = {
             IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
         },
@@ -187,13 +203,13 @@ internal fun NameDialog(
     title: String, label: String, initial: String = "",
     dismiss: () -> Unit, save: (String) -> Unit
 ) {
-    var value by rememberSaveable { mutableStateOf(initial) }
-    OverlayInputDialog(
-        show = true, value = value, onValueChange = { value = it },
-        title = title, label = label,
+    var value by rememberSaveable(initial, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(initial)) }
+    InputDialog(
+        value = value, onValueChange = { value = it }, title = title, placeholder = label,
+        clearContentDescription = "清除输入",
         onDismissRequest = dismiss,
-        negative = DialogButtonBarAction(text = "取消", onClick = dismiss),
-        positive = DialogButtonBarAction(text = "确定", enabled = value.isNotBlank(), recommended = true,
-            onClick = { save(value.trim()); dismiss() })
+        dismissAction = CouiDialogAction(text = "取消", onClick = dismiss),
+        confirmAction = CouiDialogAction(text = "确定", enabled = value.text.isNotBlank(), style = CouiDialogActionStyle.Primary,
+            onClick = { save(value.text.trim()); dismiss() })
     )
 }

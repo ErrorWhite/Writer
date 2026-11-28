@@ -10,6 +10,9 @@ function database() {
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error)
     request.onblocked = () => reject(new Error('Autosave database unavailable'))
+  }).catch(error => {
+    opening = undefined
+    throw error
   })
   return opening
 }
@@ -25,6 +28,7 @@ async function transaction(mode, run, store = 'pending') {
 }
 
 export const retainSnapshot = (id, entry) => transaction('readwrite', store => store.put(entry, id))
+export const pendingSnapshot = id => transaction('readonly', store => store.get(id))
 export const pendingSnapshots = () => transaction('readonly', store => store.getAll())
 export const rememberSyncedBook = (id, snapshot) => transaction('readwrite', store => store.put(snapshot, id), 'books')
 export const forgetSyncedBook = (id) => transaction('readwrite', store => store.delete(id), 'books')
@@ -38,7 +42,7 @@ export function clearSnapshot(id, version) {
 export async function recoverSnapshot(id) {
   if (!id) return null
   try {
-    const pending = await transaction('readonly', store => store.get(id))
+    const pending = await pendingSnapshot(id)
     const snapshot = pending?.snapshot || await transaction('readonly', store => store.get(id), 'books')
     return snapshot ? JSON.parse(snapshot) : null
   } catch { return null }

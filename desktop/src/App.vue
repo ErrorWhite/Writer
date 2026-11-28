@@ -269,7 +269,8 @@ const revisionJump = ref(null)
 const connection = computed(() => ({ ...props.initialAccounts, provider: preferences.provider }))
 const pendingReview = ref(null)
 const activeReview = computed(() => pendingReview.value || (activeChapter.value.batchReview?.length ? {
-  kind: 'batch', title: '选段重新生成 · 对比', items: activeChapter.value.batchReview,
+  kind: 'batch', title: '选段重新生成 · 对比',
+  items: activeChapter.value.batchReview.map(item => ({ ...item, after: item.editedAfter ?? item.after })),
 } : null))
 const reviewOpen = ref(false)
 const batchSelection = ref([])
@@ -560,7 +561,7 @@ async function importBackup(file) {
   importingBook.value = true
   try {
     if (file.size > 32 * 1024 * 1024) throw new Error('备份文件超过 32 MB，无法导入。')
-    const book = importManuscript(await file.text())
+    const book = importManuscript(await file.text(), { preserveIdentity: true })
     await refreshShelf()
     importPreview.value = book
   } catch (error) {
@@ -578,7 +579,8 @@ async function confirmImport(target) {
     await flush()
     if (target && ['failed', 'local'].includes(stateFor(target))) throw new Error('原书有尚未写入磁盘的修改，请先保存原书。')
     const { id } = await localRequest('/api/book/import', {
-      method: 'POST', body: { book, target }, signal: AbortSignal.timeout(12000),
+      method: 'POST', body: { book, target, preserveIdentity: !target && !importMatches.value.length },
+      signal: AbortSignal.timeout(12000),
     })
     useManuscript({ ...book, id })
     checkpoint()

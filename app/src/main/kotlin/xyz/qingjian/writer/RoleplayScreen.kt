@@ -1,6 +1,6 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
+import androidx.compose.material3.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -18,15 +18,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.Button
-import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.CircularProgressIndicator
-import io.github.suqi8.coui.kmp.basic.EmptyState
-import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.IconButton
-import io.github.suqi8.coui.kmp.basic.TextField
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.Composable
@@ -64,8 +62,14 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
     var useCard by remember { mutableStateOf<JSONObject?>(null) }
     var sessionOptions by remember { mutableStateOf(false) }
     var editCard by remember { mutableStateOf<JSONObject?>(null) }
+    var avatarTarget by rememberSaveable(book.id) { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importRoleplayCard(book.id, uri) { selected = it }
+    }
+    val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val id = avatarTarget
+        avatarTarget = null
+        if (uri != null && id != null) model.importRoleplayAvatar(book.id, id, uri)
     }
 
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -88,7 +92,14 @@ internal fun RoleplayScreen(model: WriterModel, book: BookRow, modifier: Modifie
                         onClick = { selected = item.string("id"); menu = false })
                 }
                 if (session != null) DropdownMenuItem("当前会话设置", onClick = { menu = false; sessionOptions = true })
-                if (card != null) DropdownMenuItem("编辑当前角色", onClick = { menu = false; editCard = card })
+                if (card != null) {
+                    DropdownMenuItem("编辑当前角色", onClick = { menu = false; editCard = card })
+                    DropdownMenuItem("更换角色头像", onClick = {
+                        avatarTarget = card.string("id")
+                        menu = false
+                        avatarPicker.launch(arrayOf("image/png"))
+                    })
+                }
                 DropdownMenuItem("新建角色", onClick = { menu = false; create = true })
                 DropdownMenuItem("导入酒馆角色卡", onClick = {
                     menu = false
@@ -177,17 +188,18 @@ private fun RoleplayConversation(
     val run = runs[runId]
     val running = run?.running == true
     var rewriteTarget by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    var requestRevision by rememberSaveable(id) { mutableStateOf<String?>(null) }
     var input by rememberSaveable(id) { mutableStateOf("") }
     var limit by rememberSaveable(id) { mutableIntStateOf(30) }
     val messages = remember(session) { session.records("messages") }
     val list = rememberLazyListState()
-    var branching by remember { mutableStateOf<Int?>(null) }
+    var branching by remember { mutableStateOf<String?>(null) }
     var reference by remember { mutableStateOf<JSONObject?>(null) }
 
     fun request(text: String?, rewrite: Boolean) {
         val target = if (rewrite) messages.lastOrNull()?.takeIf { it.string("role") == "assistant" }?.string("id") else null
         if (rewrite && target == null) return
-        rewriteTarget = target
+        var expectedRevision: String? = null
         model.generate(runId, "文本扮演", prepare = {
             val snapshot = export(bookId)
             val thread = findSession(snapshot, id)
@@ -200,16 +212,14 @@ private fun RoleplayConversation(
                 mutateBook(bookId) { findSession(it, id).array("messages").put(added) }
                 if (input.trim() == text) input = ""
             }
+            expectedRevision = roleplayTranscriptRevision(JSONArray(stored + listOfNotNull(added)))
+            requestRevision = expectedRevision
+            rewriteTarget = target
             prompt
         }, accept = { reply ->
             mutateBook(bookId) { payload ->
                 val transcript = findSession(payload, id).array("messages")
-                if (target == null) transcript.put(roleplayMessage("assistant", reply))
-                else {
-                    val last = transcript.optJSONObject(transcript.length() - 1)
-                    check(last?.string("id") == target) { "会话内容已改变。" }
-                    reviseRoleplayReply(checkNotNull(last), reply)
-                }
+                appendRoleplayResponse(transcript, expectedRevision, target, reply)
             }
         })
     }
@@ -261,7 +271,7 @@ private fun RoleplayConversation(
                                         }
                                         DropdownMenuItem("从此分支", onClick = {
                                             actions = false
-                                            branching = messages.indexOf(message)
+                                            branching = message.string("id")
                                         })
                                         if (bookId != standaloneRoleplayId && !user) {
                                             DropdownMenuItem("采用为参考", onClick = {
@@ -287,11 +297,7 @@ private fun RoleplayConversation(
                             model.perform {
                                 mutateBook(bookId) {
                                     val transcript = findSession(it, id).array("messages")
-                                    if (rewriteTarget != null) {
-                                        val last = transcript.optJSONObject(transcript.length() - 1)
-                                        check(last?.string("id") == rewriteTarget) { "会话内容已改变。" }
-                                        reviseRoleplayReply(checkNotNull(last), partial.text)
-                                    } else transcript.put(roleplayMessage("assistant", partial.text))
+                                    appendRoleplayResponse(transcript, requestRevision, rewriteTarget, partial.text)
                                 }
                                 model.clearGeneration(runId)
                             }
@@ -301,9 +307,10 @@ private fun RoleplayConversation(
             }
         }
         if (run?.error != null) Text(run.error, color = WriterTheme.colorScheme.error)
+        else if (run?.stage == "已停止") Text(run.stage, style = WriterTheme.typography.bodySmall)
         CurrentPlanNotice(model)
-        Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Card(modifier = Modifier.fillMaxWidth(), shape = WriterTheme.shapes.large) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 if (running) {
                     if (partial == null) CircularProgressIndicator(modifier = Modifier.size(20.dp))
@@ -311,9 +318,9 @@ private fun RoleplayConversation(
                     ToolbarTextButton(text = "停止", onClick = { model.stopGeneration(runId) })
                 } else {
                     TextField(value = input, onValueChange = { input = it }, modifier = Modifier.weight(1f),
-                        label = "输入消息", maxLines = 4)
+                        label = { Text("输入消息") }, maxLines = 4)
                     Button(onClick = { request(input.trim(), false) }, enabled = input.isNotBlank(),
-                        minWidth = 52.dp, insideMargin = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("发送") }
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("发送") }
                 }
             }
         }
@@ -349,17 +356,19 @@ private fun RoleplayConversation(
             dismissButton = { TextButton(onClick = { reference = null }) { Text("取消") } }
         )
     }
-    branching?.let { index ->
+    branching?.let { messageId ->
         AlertDialog(
             onDismissRequest = { branching = null }, title = { Text("从这条消息创建分支？") },
             confirmButton = {
                 TextButton(onClick = {
                     model.perform {
-                        val next = JSONObject(session.toString())
-                            .put("id", newId()).put("title", session.string("title", card.string("name")) + " · 分支")
-                            .put("messages", JSONArray(messages.take(index + 1)))
-                        mutateBook(bookId) { roleplay(it).array("sessions").put(next) }
-                        open(next.string("id"))
+                        var nextId = ""
+                        mutateBook(bookId) { book ->
+                            val next = branchRoleplaySession(findSession(book, id), messageId, card.string("name"))
+                            roleplay(book).array("sessions").put(next)
+                            nextId = next.string("id")
+                        }
+                        open(nextId)
                         branching = null
                     }
                 }) { Text("创建分支") }
@@ -435,7 +444,7 @@ private fun RoleplaySessionDialog(model: WriterModel, bookId: String, session: J
                 OutlinedTextField(memory, { memory = it }, minLines = 3, label = { Text("剧情记忆") })
                 TextButton(onClick = { report.launch(safeFileName(title) + ".json") }) { Text("导出会话 JSON") }
                 TextButton(onClick = { json.launch(safeFileName(card.string("name")) + ".json") }) { Text("导出角色卡 JSON") }
-                if (card.has("png")) TextButton(onClick = { png.launch(safeFileName(card.string("name")) + ".png") }) {
+                TextButton(onClick = { png.launch(safeFileName(card.string("name")) + ".png") }) {
                     Text("导出角色卡 PNG")
                 }
                 TextButton(enabled = requests["roleplay:$bookId:$id"]?.running != true, onClick = { erase = true }) {

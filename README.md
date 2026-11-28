@@ -15,6 +15,8 @@
 
 开发分支运行单元测试、lint 和 R8 代码压缩检查。功能验收完成后再手动运行 Android APK 工作流的 `signed` 任务。工作流读取已设置的持久 PKCS#12 发布密钥，逐个验证证书 SHA-256，并上传经过 R8 和资源压缩的 ARM64、x86-64 独立 APK。
 
+签名构建后，`signed-upgrade` 用 `upgrade_from_run` 指定的历史签名 APK 在 x86-64 模拟器上执行覆盖升级。它核对旧包和候选包的证书、包名和版本号，通过旧版导入固定书稿，再以覆盖安装验证同一章正文仍在，并检查新版编辑能在进程重启后恢复。APK 与升级截图、包信息和日志分别在 `Qingjian-Android-signed` 与 `Qingjian-Android-signed-upgrade` 产物中。发布验收须检查整个工作流通过。
+
 | 类型 | 名称 | 内容 |
 | --- | --- | --- |
 | Secret | `QINGJIAN_KEYSTORE_BASE64` | 发布密钥库文件的 Base64 |
@@ -32,5 +34,5 @@
 ## 开源来源
 
 - [Eta](https://github.com/Mangi-11/Eta/tree/bbab1b76b354e2f24a2e5f848b959da7f6286365)（GPL-3.0）的角色卡、世界书、社区模型目录和 SSE 源码位于 `app/src/main/kotlin/io/github/mangi/eta/`。SSE 读取器接收外部取消回调，青简负责网络连接和任务生命周期。原授权见 `COPYING`。
-- COUI 使用 Eta 同版本的 `io.github.suqi8.coui.kmp` 2.1.0（Apache-2.0）。青简沿用自己的主题配色和界面布局。
+- 原生页面使用 [ItosEO COUI-Kit](https://github.com/ItosEO/COUI-Kit)（MPL-2.0）的主题、布局、导航、菜单、浮层和设置控件。AndroidX Compose 提供正文输入、文字、图标和基础表单。最低系统版本为 Android 12（API 31），Android 12–13 使用实色底部导航，Android 14 及以上启用 COUI-Kit 浮动底栏。
 - 青简原版图标与移植规则的许可、Qingjian Serif 标题字体的 OFL 许可均在 `app/src/main/assets/licenses/`。标题字体从思源宋体派生，覆盖常用简繁汉字。

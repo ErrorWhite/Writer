@@ -32,22 +32,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Person
-import io.github.suqi8.coui.kmp.basic.FloatingActionButton
-import io.github.suqi8.coui.kmp.basic.EmptyState
-import io.github.suqi8.coui.kmp.basic.Icon
-import io.github.suqi8.coui.kmp.basic.IconButton
-import io.github.suqi8.coui.kmp.basic.TopAppBar
-import io.github.suqi8.coui.kmp.basic.COUIScrollBehavior
-import io.github.suqi8.coui.kmp.basic.SegmentButton
-import io.github.suqi8.coui.kmp.basic.ToolbarTextButton
-import io.github.suqi8.coui.kmp.preference.ArrowPreference
-import io.github.suqi8.coui.kmp.preference.RadioButtonPreference
-import io.github.suqi8.coui.kmp.preference.RadioButtonLocation
-import io.github.suqi8.coui.kmp.basic.Card
-import io.github.suqi8.coui.kmp.basic.CardDefaults
-import io.github.suqi8.coui.kmp.basic.Scaffold
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.theme.COUITheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import com.itos.coui.topappbar.TopAppBar
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import com.itos.coui.layout.Scaffold
+import androidx.compose.material3.Text
+import com.itos.coui.theme.CouiTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,7 +51,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,27 +87,19 @@ internal fun ShelfScreen(model: WriterModel, open: (String) -> Unit, settings: (
         if (it != null) model.previewImport(it)
     }
     val pickBackup = { importPicker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
-    val scroll = COUIScrollBehavior()
     Scaffold(
-        modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         containerColor = WriterTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = "书架",
-                color = WriterTheme.colorScheme.background,
-                largeTitleColor = WriterTheme.colorScheme.onBackground,
-                showDivider = false,
+                title = { Text("书架", style = WriterTheme.typography.titleLarge) },
                 actions = {
                     IconButton(onClick = roleplay) { Icon(Icons.Default.Person, "文本扮演") }
                     IconButton(onClick = settings) { Icon(Icons.Default.Settings, "设置") }
-                },
-                scrollBehavior = scroll
+                    if (books?.isNotEmpty() == true) {
+                        IconButton(onClick = { creating = true }) { Icon(Icons.Default.Add, "新建作品") }
+                    }
+                }
             )
-        },
-        floatingActionButton = {
-            if (books?.isNotEmpty() == true) FloatingActionButton(onClick = { creating = true }) {
-                Icon(Icons.Default.Add, "新建作品")
-            }
         }
     ) { padding ->
         val entries = books
@@ -215,8 +198,8 @@ private fun RecentBook(book: ShelfEntry, open: (String) -> Unit) {
     val colors = WriterTheme.colorScheme
     Card(
         modifier = Modifier.fillMaxWidth(), onClick = { open(book.id) },
-        insideMargin = PaddingValues(0.dp), cornerRadius = 24.dp,
-        colors = CardDefaults.defaultColors(color = colors.surface, contentColor = colors.onSurface)
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.surface, contentColor = colors.onSurface)
     ) {
         Row(Modifier.fillMaxWidth().padding(18.dp), horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -236,9 +219,9 @@ private fun RecentBook(book: ShelfEntry, open: (String) -> Unit) {
 @Composable
 private fun BookTile(book: ShelfEntry, grid: Boolean, open: (String) -> Unit) {
     Card(onClick = { open(book.id) }, modifier = Modifier.fillMaxWidth(),
-        insideMargin = PaddingValues(0.dp),
-        cornerRadius = if (grid) 16.dp else 18.dp,
-        colors = CardDefaults.defaultColors(color = if (grid) Color.Transparent else WriterTheme.colorScheme.surface)) {
+        shape = RoundedCornerShape(if (grid) 16.dp else 18.dp),
+        colors = CardDefaults.cardColors(containerColor = if (grid) Color.Transparent else WriterTheme.colorScheme.surface,
+            contentColor = WriterTheme.colorScheme.onSurface)) {
         val details: @Composable () -> Unit = {
             Text(book.title, style = WriterTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(book.activeChapterTitle.orEmpty().ifBlank { "${book.chapterCount} 章" },
@@ -271,7 +254,7 @@ private fun Cover(book: ShelfEntry, shape: Modifier) {
     if (bytes != null) {
         AsyncImage(bytes, null, modifier, contentScale = ContentScale.Crop)
     } else {
-        val stock = if (COUITheme.isDark) darkBookCovers else lightBookCovers
+        val stock = if (CouiTheme.isDark) darkBookCovers else lightBookCovers
         val (highlight, shade) = stock[(book.id.hashCode() and Int.MAX_VALUE) % stock.size]
         Box(modifier.background(Brush.linearGradient(listOf(highlight, shade)))
             .border(1.dp, Color.Black.copy(alpha = .08f), coverShape), contentAlignment = Alignment.Center) {
@@ -303,8 +286,7 @@ internal fun SettingsScreen(model: WriterModel, mode: ThemeMode, back: () -> Uni
             PreferenceGroup("外观") {
                 ThemeMode.entries.forEach { option ->
                     item(option.name) {
-                        RadioButtonPreference(option.label, mode == option, { model.setTheme(option) },
-                            radioButtonLocation = RadioButtonLocation.End)
+                        RadioButtonPreference(option.label, mode == option, { model.setTheme(option) })
                     }
                 }
             }

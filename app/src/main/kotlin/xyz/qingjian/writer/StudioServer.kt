@@ -115,7 +115,7 @@ internal class StudioServer(
     suspend fun generate(
         endpoint: String, task: String, system: String, messages: List<ModelMessage>,
         text: (String) -> Unit, reasoning: (String) -> Unit, usage: (ModelUsage) -> Unit,
-        scripts: List<JSONObject>
+        scripts: List<JSONObject>, stage: (String) -> Unit = {}
     ): String {
         val intent = when (task) {
             "文本扮演" -> "roleplay"
@@ -156,13 +156,18 @@ internal class StudioServer(
                     text(fragment)
                 }
                 "summary" -> reasoning(fragment)
+                "stage" -> stage(fragment)
             }
         }
         val meter = value.optJSONObject("usage")
         usage(ModelUsage(
             (meter?.opt("input") as? Number)?.toInt(),
             (meter?.opt("output") as? Number)?.toInt(),
-            (meter?.opt("cached") as? Number)?.toInt()
+            (meter?.opt("cached") as? Number)?.toInt(),
+            accountId = value.string("accountId").takeIf(String::isNotBlank)
+                ?.let { "studio:${syncHash(endpoint).take(12)}:$it" }.orEmpty(),
+            accountName = value.string("account"),
+            model = value.string("model")
         ))
         val structured = value.opt("data")
         return when {

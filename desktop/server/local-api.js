@@ -223,13 +223,14 @@ export function createApiHandler(env, { isAuthenticatedSiteRequest = () => false
     })
   }
 
-  function saveBook(book, { replace = false } = {}) {
+  function saveBook(book, { replace = false, createOnly = false } = {}) {
     const id = book?.id || starterBookId
     const content = JSON.stringify(checkedBook(book, id))
     return queueWrite(async () => {
       if (await readJson(syncPath(id), null)) return 'sync_required'
       const shelf = await readLegacyShelf()
       if (shelf.deleted.includes(id)) return false
+      if (createOnly && (shelf.books.some(item => item.id === id) || await readLegacyBook(id))) return false
       if (replace) {
         const previous = await readBook(id)
         if (!previous || bookTitleKey(previous.title) !== bookTitleKey(book.title)) return false
@@ -371,8 +372,12 @@ export function createApiHandler(env, { isAuthenticatedSiteRequest = () => false
         return reply(response, 200, { saved: true })
       }
       if (route === 'POST /api/book/import') {
-        const { book, target = '' } = await readBody(request)
+        const { book, target = '', preserveIdentity = false } = await readBody(request)
         if (target && !validBookId(target)) return reply(response, 400, { error: '请选择要覆盖的书。' })
+        if (!target && preserveIdentity === true && validBookId(book?.id)) {
+          const created = await saveBook(book, { createOnly: true })
+          if (created === true) return reply(response, 200, { id: book.id })
+        }
         const id = target || randomUUID()
         const saved = await saveBook({ ...book, id }, { replace: Boolean(target) })
         if (saved === 'sync_required') return reply(response, 428, { code: saved, error: '请在同步书稿中采用导入稿。' })

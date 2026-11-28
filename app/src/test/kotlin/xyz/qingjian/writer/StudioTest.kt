@@ -13,6 +13,17 @@ import org.junit.Rule
 import org.junit.rules.TemporaryFolder
 
 class StudioTest {
+    @Test
+    fun synchronizedDeletionMetadataSurvivesRestartAndReadsOlderLinks() {
+        val original = SyncedBook.read(JSONObject("""
+            {"endpoint":"https://sync.example.test/","revision":"r1","digest":"confirmed"}
+        """.trimIndent()))
+        assertEquals(null, original.deleteDigest)
+        val pending = original.copy(deleteDigest = "local-at-deletion")
+        assertEquals(pending, SyncedBook.read(JSONObject(pending.json().toString())))
+        assertEquals(original, SyncedBook.read(JSONObject(pending.copy(deleteDigest = null).json().toString())))
+    }
+
     @get:Rule val temp = TemporaryFolder()
 
     @Test
@@ -34,6 +45,23 @@ class StudioTest {
             session.records("messages") + roleplayMessage("user", "我走进灯塔。"), false)
         assertTrue(system.contains("灯塔熄灭"))
         assertEquals("user", messages.last().role)
+    }
+
+    @Test
+    fun aJsonCardWithoutAvatarCanRoundTripThroughTavernPng() {
+        val card = readRoleplayCard("""
+            {"spec":"chara_card_v3","spec_version":"3.0","data":{"name":"听潮",
+              "first_mes":"启航","alternate_greetings":["回到港口"],"extensions":{"chapter":7}}}
+        """.trimIndent().toByteArray())
+        assertFalse(card.has("png"))
+        val exported = exportCard(card, true)
+        val imported = readRoleplayCard(exported)
+        assertEquals("听潮", imported.string("name"))
+        assertEquals("启航", imported.string("greeting"))
+        assertEquals(listOf("回到港口"), etaCard(imported).alternateGreetings)
+        assertEquals(7, JSONObject(etaCard(imported).extensions.toString()).getInt("chapter"))
+        assertEquals(roleplayAvatar(exported), imported.string("png"))
+        assertTrue(runCatching { roleplayAvatar("not a png".toByteArray()) }.isFailure)
     }
 
     @Test
@@ -95,6 +123,23 @@ class StudioTest {
         val rows = alignDiff("开场\n旧稿\n下章", "开场\n新稿\n新增\n下章")
         assertEquals(listOf(DiffLine("开场", "开场"), DiffLine("旧稿", "新稿"),
             DiffLine(null, "新增"), DiffLine("下章", "下章")), rows)
+    }
+
+    @Test
+    fun bookSnapshotComparisonUsesChapterIdentityAndShowsReorderingSeparately() {
+        val saved = Manuscript.create("雾港").put("outline", "旧大纲")
+        val chapters = saved.records("volumes").single().getJSONArray("chapters")
+        chapters.getJSONObject(0).put("title", "开场").put("text", "旧稿")
+        chapters.put(Manuscript.newChapter("后章").put("text", "保留的正文"))
+        val current = JSONObject(saved.toString()).put("outline", "新大纲")
+        val currentChapters = current.records("volumes").single().getJSONArray("chapters")
+        val first = currentChapters.remove(0) as JSONObject
+        currentChapters.put(first.put("text", "新稿"))
+
+        val differences = compareBookSnapshots(current, saved)
+        assertEquals(listOf("卷章目录", "全书大纲", "开场"), differences.map { it.label })
+        assertEquals(BookSnapshotDifference("开场", "新稿", "旧稿"), differences.last())
+        assertTrue(compareBookSnapshots(current, JSONObject(current.toString())).isEmpty())
     }
 
     @Test

@@ -1,13 +1,13 @@
 package xyz.qingjian.writer
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.preference.ArrowPreference
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,9 +19,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-private val profileFields = linkedMapOf(
+internal val profileFields = linkedMapOf(
     "genre" to "类别", "mainCharacter" to "主角", "pointOfView" to "叙事视角", "premise" to "故事内核",
     "theme" to "主题", "setting" to "时代与背景", "readerPromise" to "读者期待", "storyStages" to "阶段推进",
     "writingStyle" to "写作文风", "styleCorrection" to "文风纠偏", "extra" to "其他要求", "referenceText" to "参考样稿"
@@ -50,26 +52,58 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     }
     if (profileOpen) {
         val profile = payload.optJSONObject("aiSetup") ?: JSONObject()
+        val chapters by remember(book.id) { model.library.directory(book.id) }
+            .collectAsStateWithLifecycle(initialValue = emptyList())
         var fields by remember(profile) { mutableStateOf(profileFields.keys.associateWith { profile.string(it) }) }
         var total by rememberSaveable { mutableStateOf(profile.optInt("wordTarget", 80000).toString()) }
         var chapter by rememberSaveable { mutableStateOf(profile.optInt("chapterTarget", 1500).toString()) }
+        var referenceType by rememberSaveable { mutableStateOf(profile.string("referenceType", "chapter")) }
+        var referenceChapterId by rememberSaveable { mutableStateOf(profile.string("referenceChapterId")) }
+        var referenceMenu by remember { mutableStateOf(false) }
         SettingsDialog("作品立项", { profileOpen = false }, save = {
             model.perform {
+                val referenceSnapshot = if (referenceType == "chapter" && referenceChapterId.isNotBlank()) {
+                    chapterText(book.id, referenceChapterId).ifBlank {
+                        profile.string("referenceSnapshot").takeIf { referenceChapterId == profile.string("referenceChapterId") }.orEmpty()
+                    }
+                } else ""
                 mutateBook(book.id) { data ->
                     val setup = data.obj("aiSetup")
                     fields.forEach { (key, text) -> setup.put(key, text) }
                     setup.put("wordTarget", total.toIntOrNull()?.coerceIn(1, 10_000_000) ?: 80_000)
                         .put("chapterTarget", chapter.toIntOrNull()?.coerceIn(100, 12_000) ?: 1500)
                         .put("configured", true)
-                    if (!fields["referenceText"].isNullOrBlank()) setup.put("referenceType", "paste")
+                    setup.put("referenceType", referenceType)
+                        .put("referenceChapterId", referenceChapterId).put("referenceSnapshot", referenceSnapshot)
                 }
                 profileOpen = false
             }
         }) {
             OutlinedTextField(total, { total = it }, singleLine = true, label = { Text("全书目标字数") })
             OutlinedTextField(chapter, { chapter = it }, singleLine = true, label = { Text("单章目标字数") })
-            profileFields.forEach { (key, label) ->
+            profileFields.filterKeys { it != "referenceText" }.forEach { (key, label) ->
                 OutlinedTextField(fields[key].orEmpty(), { fields = fields + (key to it) }, label = { Text(label) })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(referenceType == "chapter", { referenceType = "chapter" }, label = "参考章")
+                FilterChip(referenceType == "paste", { referenceType = "paste" }, label = "粘贴样稿")
+            }
+            if (referenceType == "paste") {
+                OutlinedTextField(fields["referenceText"].orEmpty(),
+                    { fields = fields + ("referenceText" to it) }, label = { Text("参考样稿") })
+            } else {
+                Box {
+                    TextButton(onClick = { referenceMenu = true }) {
+                        Text(chapters.firstOrNull { it.id == referenceChapterId }?.title
+                            ?: if (referenceChapterId.isBlank()) "选择参考章" else "参考章已移除")
+                    }
+                    DropdownMenu(referenceMenu, { referenceMenu = false }) {
+                        DropdownMenuItem("清除参考章", onClick = { referenceChapterId = ""; referenceMenu = false })
+                        chapters.forEach { entry ->
+                            DropdownMenuItem(entry.title, onClick = { referenceChapterId = entry.id; referenceMenu = false })
+                        }
+                    }
+                }
             }
         }
     }
@@ -107,6 +141,8 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
     }
     if (writingOpen) {
         var size by rememberSaveable { mutableStateOf(payload.optInt("fontSize", 17).toString()) }
+        var font by rememberSaveable { mutableStateOf(payload.string("bodyFont", "serif")) }
+        var spacing by rememberSaveable { mutableStateOf(payload.optDouble("bodyLineSpacing", 1.75).toString()) }
         var goal by rememberSaveable { mutableStateOf(payload.optInt("goal", 1500).toString()) }
         var paper by rememberSaveable {
             mutableStateOf(payload.string("paper", "white").let { if (it == "warm") "cream" else it })
@@ -116,6 +152,8 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
             model.perform {
                 mutateBook(book.id) { data ->
                     data.put("fontSize", size.toIntOrNull()?.coerceIn(13, 32) ?: 17)
+                        .put("bodyFont", font)
+                        .put("bodyLineSpacing", spacing.toDoubleOrNull()?.takeIf(Double::isFinite)?.coerceIn(1.3, 2.5) ?: 1.75)
                         .put("goal", goal.toIntOrNull()?.coerceIn(0, 100_000) ?: 1500)
                         .put("paper", paper)
                         .put("dividerStyle", divider)
@@ -124,6 +162,11 @@ internal fun BookSettings(model: WriterModel, book: BookRow) {
             }
         }) {
             OutlinedTextField(size, { size = it }, singleLine = true, label = { Text("正文字号（13–32）") })
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(font == "serif", { font = "serif" }, label = "衬线")
+                FilterChip(font == "sans", { font = "sans" }, label = "无衬线")
+            }
+            OutlinedTextField(spacing, { spacing = it }, singleLine = true, label = { Text("行距倍数（1.3–2.5）") })
             OutlinedTextField(goal, { goal = it }, singleLine = true, label = { Text("编辑器目标字数") })
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("white" to "白纸", "cream" to "暖白", "blue" to "雾蓝").forEach { (key, label) ->
@@ -176,10 +219,22 @@ private fun BookVersionDialog(model: WriterModel, book: BookRow, dismiss: () -> 
     val versions by remember(book.id) { model.library.bookVersions(book.id) }
         .collectAsStateWithLifecycle(initialValue = emptyList())
     var chosen by rememberSaveable { mutableStateOf<Long?>(null) }
+    var comparison by remember { mutableStateOf<List<BookSnapshotDifference>?>(null) }
+    var difference by remember { mutableStateOf<BookSnapshotDifference?>(null) }
     AlertDialog(onDismissRequest = dismiss, title = { Text(if (chosen == null) "全书还原点" else "还原全书？") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (chosen != null) Text("还原前会为当前全书创建一个还原点。")
+                val versionId = chosen
+                if (versionId != null) {
+                    Text("还原前会为当前全书创建一个还原点。")
+                    TextButton(onClick = {
+                        model.perform {
+                            val current = export(book.id)
+                            val stored = readBookVersion(book.id, versionId)
+                            comparison = withContext(Dispatchers.Default) { compareBookSnapshots(current, stored) }
+                        }
+                    }) { Text("与当前全书比较") }
+                }
                 else if (versions.isEmpty()) Text("尚未保存全书还原点")
                 else versions.forEach { version ->
                     TextButton(onClick = { chosen = version.id }) {
@@ -196,4 +251,63 @@ private fun BookVersionDialog(model: WriterModel, book: BookRow, dismiss: () -> 
             } else TextButton(onClick = { model.restoreBookVersion(book.id, id, dismiss) }) { Text("还原") }
         }
     )
+    comparison?.let { changes ->
+        AlertDialog(
+            onDismissRequest = { comparison = null }, title = { Text("全书还原点差异") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    if (changes.isEmpty()) Text("两个版本一致")
+                    changes.forEach { change ->
+                        TextButton(onClick = { difference = change }) { Text(change.label) }
+                    }
+                }
+            }, confirmButton = { TextButton(onClick = { comparison = null }) { Text("关闭") } }
+        )
+    }
+    difference?.let { change ->
+        ReviewDiff(change.current, change.stored, change.label, "当前书稿", "保存版本", onlyChanges = true) {
+            difference = null
+        }
+    }
+}
+
+internal data class BookSnapshotDifference(val label: String, val current: String, val stored: String)
+
+internal fun compareBookSnapshots(current: JSONObject, stored: JSONObject): List<BookSnapshotDifference> {
+    fun compare(label: String, before: String, after: String) =
+        BookSnapshotDifference(label, before, after).takeIf { before != after }
+
+    fun arrangement(book: JSONObject) = book.records("volumes").joinToString("\n\n") { volume ->
+        "# ${volume.string("title")} [${volume.string("id")}]\n" +
+            volume.records("chapters").joinToString("\n") { chapter ->
+                "${chapter.string("title")} [${chapter.string("id")}]"
+            }
+    }
+
+    fun chapters(book: JSONObject) =
+        book.records("volumes").flatMap { it.records("chapters") }.associateBy { it.string("id") }
+
+    fun settings(book: JSONObject) = JSONObject().apply {
+        book.keys().asSequence().sorted().filterNot { it in setOf("volumes", "outline", "notes", "activeId") }
+            .forEach { key -> put(key, book.get(key)) }
+    }
+
+    val live = chapters(current)
+    val saved = chapters(stored)
+    return buildList {
+        compare("卷章目录", arrangement(current), arrangement(stored))?.let(::add)
+        compare("全书大纲", current.string("outline"), stored.string("outline"))?.let(::add)
+        compare("人物与世界设定", current.string("notes"), stored.string("notes"))?.let(::add)
+        val currentSettings = settings(current)
+        val savedSettings = settings(stored)
+        if (sortedJson(currentSettings) != sortedJson(savedSettings)) {
+            add(BookSnapshotDifference("作品配置与资料", currentSettings.toString(2), savedSettings.toString(2)))
+        }
+        (live.keys + saved.keys).forEach { id ->
+            val before = live[id]
+            val after = saved[id]
+            val title = before?.string("title") ?: after?.string("title").orEmpty()
+            compare(title, before?.string("text").orEmpty(), after?.string("text").orEmpty())?.let(::add)
+        }
+    }
 }

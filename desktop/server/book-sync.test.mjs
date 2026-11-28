@@ -31,6 +31,16 @@ test('existing copies are upgraded with conditional writes and deletion remains 
   const oldPath = '/api/book?id=' + id
   const book = { id, title: '雪路', volumes: [{ chapters: [{ text: '第一段。' }] }] }
   const next = { ...book, title: '雪路二稿' }
+  const draft = { ...book, id: 'cross-device-import', title: '跨端交换' }
+  const imports = await Promise.all([
+    request('/api/book/import', 'POST', { book: draft, preserveIdentity: true }),
+    request('/api/book/import', 'POST', { book: { ...draft, title: '同标识的副本' }, preserveIdentity: true }),
+  ])
+  assert.ok(imports.every(result => result.status === 200))
+  assert.equal(imports.filter(result => result.body.id === draft.id).length, 1)
+  const identityHolder = imports.findIndex(result => result.body.id === draft.id)
+  assert.equal((await request('/api/book?id=' + draft.id)).body.title,
+    identityHolder === 0 ? draft.title : '同标识的副本')
 
   assert.equal((await request('/api/sync/v1')).body.version, 1)
   assert.equal((await request(path)).status, 404)
@@ -54,6 +64,9 @@ test('existing copies are upgraded with conditional writes and deletion remains 
   assert.equal((await request(oldPath, 'DELETE')).status, 428)
 
   const restarted = await start()
+  assert.deepEqual((await restarted(path)).body.book, accepted.book)
+  const offlineDeletion = { operationId: 'request-offline-delete', baseRevision: initial.revision }
+  assert.equal((await restarted(path, 'DELETE', offlineDeletion)).status, 412)
   assert.deepEqual((await restarted(path)).body.book, accepted.book)
   const deletion = { operationId: 'request-delete', baseRevision: winner.body.revision }
   const deleted = await restarted(path, 'DELETE', deletion)

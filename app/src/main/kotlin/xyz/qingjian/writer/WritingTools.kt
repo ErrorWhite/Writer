@@ -7,16 +7,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class FormatAction(val label: String, val prefix: String, val suffix: String, val sample: String) {
     Indent("缩进", "", "", "　　"),
@@ -61,8 +64,15 @@ internal fun FindDialog(value: TextFieldValue, changed: (TextFieldValue) -> Unit
     var replacement by rememberSaveable { mutableStateOf("") }
     var matchCase by rememberSaveable { mutableStateOf(false) }
     var confirmAll by rememberSaveable { mutableStateOf(false) }
-    val count = if (query.isBlank()) 0 else Regex(Regex.escape(query),
-        if (matchCase) setOf() else setOf(RegexOption.IGNORE_CASE)).findAll(value.text).count()
+    val source = value.text
+    val result by produceState<LiteralSearchResult?>(null, source, query, matchCase) {
+        val term = query
+        val sensitive = matchCase
+        this.value = withContext(Dispatchers.Default) {
+            LiteralSearchResult(source, term, sensitive, countLiteralMatches(source, term, sensitive))
+        }
+    }
+    val count = result?.takeIf { it.source == source && it.query == query && it.matchCase == matchCase }?.count ?: 0
     val canLocate = query.isNotBlank() && count > 0
     AlertDialog(
         onDismissRequest = dismiss,
@@ -103,10 +113,25 @@ internal fun FindDialog(value: TextFieldValue, changed: (TextFieldValue) -> Unit
         onDismissRequest = { confirmAll = false },
         title = { Text("替换全部 $count 处匹配？") },
         confirmButton = {
-            TextButton(onClick = {
+                TextButton(enabled = canLocate, onClick = {
                 changed(TextFieldValue(value.text.replace(query, replacement, ignoreCase = !matchCase)))
                 dismiss()
             }) { Text("全部替换") }
         }, dismissButton = { TextButton(onClick = { confirmAll = false }) { Text("取消") } }
     )
+}
+
+private data class LiteralSearchResult(val source: String, val query: String, val matchCase: Boolean, val count: Int)
+
+internal fun countLiteralMatches(source: String, term: String, matchCase: Boolean): Int {
+    if (term.isBlank()) return 0
+    var count = 0
+    var offset = 0
+    while (offset < source.length) {
+        val next = source.indexOf(term, offset, ignoreCase = !matchCase)
+        if (next < 0) break
+        count++
+        offset = next + term.length
+    }
+    return count
 }

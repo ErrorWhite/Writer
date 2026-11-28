@@ -1,6 +1,6 @@
 package xyz.qingjian.writer
 
-import io.github.suqi8.coui.kmp.basic.Surface
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import io.github.suqi8.coui.kmp.basic.Text
-import io.github.suqi8.coui.kmp.basic.ChipTabRow
-import io.github.suqi8.coui.kmp.basic.EmptyState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -89,8 +87,8 @@ internal fun StoryScreen(model: WriterModel, book: BookRow, openEditor: () -> Un
     direction?.let { option ->
         NameDialog("按此方向新建章节", "章名", option.string("title"), dismiss = { direction = null }) { title ->
             model.perform {
-                addChapter(book.id, chapter.volumeId, title, JSONObject().put("direction", option.string("detail"))
-                    .put("handoffFrom", chapter.id))
+                addChapter(book.id, chapter.volumeId, title,
+                    plan = chapterPlan(option.string("detail"), chapter.id), afterChapterId = chapter.id)
                 openEditor()
             }
         }
