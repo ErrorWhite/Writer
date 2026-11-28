@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mangi.eta.data.provider.CommunityCatalog
 import io.github.mangi.eta.data.provider.CommunityCatalogProvider
+import com.itos.coui.layout.Group
 import com.itos.coui.layout.Scaffold
 import com.itos.coui.sheet.BottomSheet
 
@@ -191,8 +192,8 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val tabs = listOf("连接", "模型")
             SegmentButton(tabs, tabs.indexOf(tab), { tab = tabs[it] }, modifier = Modifier.fillMaxWidth())
-            if (tab == "连接") Card {
-              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (tab == "连接") Group {
+              Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!exists) {
                     TextButton(onClick = { presets = true }) { Text("选择供应商预设") }
                     DropdownMenu(presets, { presets = false }) {
@@ -243,8 +244,8 @@ private fun AccountDialog(model: WriterModel, account: ProviderAccount, exists: 
                     Text("删除账号", color = WriterTheme.colorScheme.error)
                 }
               }
-            } else Card {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            } else Group {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value.model, { value = value.copy(model = it) }, Modifier.fillMaxWidth(),
                         singleLine = true, label = { Text("模型 ID") })
                     val efforts = supportedEfforts(value)

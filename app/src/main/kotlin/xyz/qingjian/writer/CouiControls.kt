@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import com.itos.coui.checkbox.Checkbox as CouiCheckbox
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -227,11 +228,13 @@ internal fun LinearProgressIndicator(modifier: Modifier = Modifier, progress: Fl
 
 @Composable
 internal fun EmptyState(
-    title: String, subtitle: String? = null, actionText: String? = null, onActionClick: (() -> Unit)? = null
+    title: String, subtitle: String? = null, actionText: String? = null, onActionClick: (() -> Unit)? = null,
+    titleStyle: TextStyle = WriterTheme.typography.titleMedium, illustration: (@Composable () -> Unit)? = null
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 18.dp, horizontal = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, style = WriterTheme.typography.titleMedium)
+        illustration?.invoke()
+        Text(title, style = titleStyle)
         if (subtitle != null) Text(subtitle, color = WriterTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         if (actionText != null && onActionClick != null) TextButton(onClick = onActionClick) { Text(actionText) }
     }
@@ -323,16 +326,17 @@ internal fun OutlinedTextField(
     singleLine: Boolean = false,
     minLines: Int = 1,
     password: Boolean = false,
+    enabled: Boolean = true,
     label: @Composable () -> Unit
 ) {
     var reveal by remember { mutableStateOf(false) }
     ComposeOutlinedTextField(
-        value = value, onValueChange = onValueChange, modifier = modifier,
+        value = value, onValueChange = onValueChange, modifier = modifier, enabled = enabled,
         singleLine = singleLine, minLines = minLines, label = label, shape = WriterTheme.shapes.medium,
         visualTransformation = if (password && !reveal) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = if (password) KeyboardOptions(keyboardType = KeyboardType.Password) else KeyboardOptions.Default,
         trailingIcon = if (password) {
-            { TextButton(onClick = { reveal = !reveal }) { Text(if (reveal) "隐藏" else "显示") } }
+            { TextButton(enabled = enabled, onClick = { reveal = !reveal }) { Text(if (reveal) "隐藏" else "显示") } }
         } else null
     )
 }
