@@ -240,7 +240,8 @@ class WritingFlowTest {
                     requireNotNull(device.wait(Until.findObject(By.text("原生续写验收")), 15_000)).click()
                     requireNotNull(device.wait(Until.findObject(By.text("源码")), 10_000)).click()
                     requireNotNull(device.wait(Until.findObject(By.text("输入测试长章")), 10_000)).click()
-                    assertChapterSaved(device, scenario, library, DraftKey(bookId, first.string("id")), longChapterFixture())
+                    assertChapterSaved(device, scenario, library, DraftKey(bookId, first.string("id")),
+                        WritingTestIme.longChapterFixture())
                     requireNotNull(device.wait(Until.findObject(By.text("完成")), 10_000)).click()
                     requireNotNull(device.wait(Until.findObject(By.text("已保存")), 10_000))
                     scenario.onActivity { check(findWebView(it.window.decorView) == null) }
